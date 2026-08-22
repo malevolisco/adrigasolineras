@@ -626,9 +626,10 @@ def procesar(c):
     if c.get("fn"):
         r = c["fn"](c)
         for e in r:
-            e["brand"] = marca
-            e["country"] = pais
-            e["source"] = marca
+            # Si el extractor ya sabe la marca y el pais reales, se respetan.
+            e.setdefault("brand", marca)
+            e.setdefault("country", pais)
+            e.setdefault("source", marca)
         return r
 
     portada, diag = traer(base)
