@@ -275,7 +275,7 @@ def candidatas(portada_html, base):
 # El precio esta en el atributo content, no en el texto visible, que va
 # partido en <sup> y no se puede leer de corrido.
 # ---------------------------------------------------------------------------
-FICHA = re.compile(r'href="(/tankstations/[a-z0-9\-]+)"', re.I)
+FICHA = re.compile(r'href="((?:https?://[^"]*?)?/tankstations/[^"?#]{3,}?)/?"', re.I)
 BLOQUE_DIESEL = re.compile(r'taxonomy-term-Diesel[\s_-]*B7(.{0,4000}?)field--name-field-prices-price-pump', re.S | re.I)
 PRECIO_ATTR = re.compile(r'content="(\d[.,]\d{2,3})"[^>]*field--name-field-prices-price-pump', re.I)
 DIRECCION = re.compile(r'address-line1">([^<]+)<.*?postal-code">([^<]+)<.*?locality">([^<]+)<', re.S | re.I)
@@ -353,8 +353,10 @@ def postjson(url, cuerpo, timeout=25):
     req = Request(url, data=datos, headers={
         "User-Agent": AGENTE,
         "Content-Type": "text/plain;charset=UTF-8",
-        "Accept": "application/json",
+        "Accept": "*/*",
+        "Accept-Language": "nl-BE,nl;q=0.9,en;q=0.7",
         "Origin": "https://dats24.be",
+        "Referer": "https://dats24.be/nl/particulier/tankstation-laadpaal-vinden",
     })
     try:
         with urlopen(req, timeout=timeout) as r:
@@ -371,51 +373,83 @@ def postjson(url, cuerpo, timeout=25):
 
 def dats24(c):
     url = "https://dats24.be/api/service_point_locator"
-    # Rejilla sobre Belgica: lat 49.5-51.5, lon 2.6-6.4
-    puntos = []
-    la = 49.55
+
+    # ---- Sondeo: se prueban variantes del cuerpo en Rebecq, donde consta
+    #      que hay estacion con diesel a 2,292. La que devuelva datos, gana.
+    REBECQ = (50.6570, 4.1651)
+    variantes = [
+        ("tal cual se capturo",
+         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
+          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
+        ("con diesel explicito",
+         {"fuelProductType": ["DIESEL"], "latitude": REBECQ[0], "longitude": REBECQ[1],
+          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
+        ("sin filtro de tipo",
+         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
+          "searchRadius": 28512, "serviceDeliveryPointType": []}),
+        ("radio pequeno",
+         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
+          "searchRadius": 5000, "serviceDeliveryPointType": ["FUEL"]}),
+        ("coordenadas como texto",
+         {"fuelProductType": [], "latitude": str(REBECQ[0]), "longitude": str(REBECQ[1]),
+          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
+    ]
+
+    plantilla = None
+    for nombre, cuerpo in variantes:
+        j, diag = postjson(url, cuerpo)
+        n = len(j) if isinstance(j, list) else (len(str(j)) if j else 0)
+        log(f"  sondeo [{nombre}] -> {diag}, contenido: {str(j)[:220]}")
+        if j and n:
+            plantilla = cuerpo
+            log(f"  -> funciona la variante: {nombre}")
+            break
+
+    if plantilla is None:
+        log("  ninguna variante devuelve datos. La API pide algo mas (sesion o cabecera).")
+        return []
+
+    # ---- Barrido con la variante que funciona
+    puntos, la = [], 49.55
     while la <= 51.55:
         lo = 2.65
         while lo <= 6.45:
             puntos.append((round(la, 4), round(lo, 4)))
             lo += 0.50
         la += 0.35
-    log(f"  rejilla de {len(puntos)} puntos, radio 28,5 km")
+    log(f"  rejilla de {len(puntos)} puntos, radio {plantilla['searchRadius']} m")
 
-    fuera, muestra_hecha, vacios = [], False, 0
+    fuera, vacios = [], 0
     for i, (la, lo) in enumerate(puntos):
-        j, diag = postjson(url, {"fuelProductType": [], "latitude": la, "longitude": lo,
-                                 "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]})
+        cuerpo = dict(plantilla)
+        cuerpo["latitude"] = la if not isinstance(plantilla["latitude"], str) else str(la)
+        cuerpo["longitude"] = lo if not isinstance(plantilla["longitude"], str) else str(lo)
+        j, diag = postjson(url, cuerpo)
         if j is None:
-            log(f"  punto {la},{lo} -> {diag}")
             vacios += 1
             if vacios > 5:
                 log("  demasiados fallos seguidos, se detiene")
                 break
             continue
-        if not muestra_hecha:
-            # Una sola vez: se deja constancia de como viene la respuesta
-            log(f"  estructura de la respuesta: {str(j)[:600]}")
-            muestra_hecha = True
         halladas = []
         rastrea(j, halladas)
         fuera.extend(halladas)
-        if i % 10 == 0:
+        if i % 8 == 0:
             log(f"  ... {i+1}/{len(puntos)} puntos, {len(fuera)} lecturas")
     log(f"  DATS 24: {len(fuera)} lecturas con precio antes de deduplicar")
     return fuera
 
 
 CADENAS = [
+    {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
+    {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
+    {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
+    {"marca": "Octa+",     "pais": "BE", "base": "https://www.octaplus.be"},
     {"marca": "Tango",   "pais": "NL", "base": "https://www.tango.nl"},
     {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl",
      "fn": lambda c: por_fichas(c["base"], c["base"] + "/tankstations", c["marca"], c["pais"])},
     {"marca": "Gulf",    "pais": "NL", "base": "https://www.gulf.nl"},
     {"marca": "Kreuze",  "pais": "NL", "base": "https://www.kreuze.nl"},
-    {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
-    {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
-    {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
-    {"marca": "Octa+",     "pais": "BE", "base": "https://www.octaplus.be"},
     {"marca": "Firezone",  "pais": "NL", "base": "https://www.firezone.nl"},
     {"marca": "Fieten",    "pais": "NL", "base": "https://www.fietenolie.nl"},
     {"marca": "SuperTank", "pais": "NL", "base": "https://www.supertank.nl"},
@@ -480,10 +514,9 @@ def procesar(c):
 # lista de objetivos sale de un dato, no de suposiciones.
 # ---------------------------------------------------------------------------
 def descubrir_marcas():
-    consulta = """[out:json][timeout:90];
-    area["ISO3166-1"~"^(NL|BE)$"][admin_level=2]->.p;
-    nwr["amenity"="fuel"](area.p);
-    out tags center;"""
+    consulta = ('[out:json][timeout:60];'
+                'nwr["amenity"="fuel"](49.45,2.50,53.70,7.30);'
+                'out tags center;')
     try:
         req = Request("https://overpass-api.de/api/interpreter",
                       data=("data=" + consulta).encode("utf-8"),
