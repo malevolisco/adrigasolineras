@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ruta diésel · Europa</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{--board:#11151C;--panel:#161B23;--led:#FFB000;--signage:#0B3C7D;--ink:#141922;
+        --soft:#8B94A2;--green:#4ADE80;--line:#232A35}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;display:flex;background:var(--board)}
+  #map{flex:1;min-width:0;background:#dfe4ea}
+
+  aside{width:355px;flex:0 0 355px;background:var(--panel);color:#fff;display:flex;
+        flex-direction:column;overflow:hidden;border-left:1px solid #000}
+  .hd{padding:.6rem .75rem;border-bottom:1px solid var(--line);display:flex;
+      justify-content:space-between;align-items:baseline}
+  .hd b{font-size:.66rem;letter-spacing:.16em}
+  .hd i{font-style:normal;color:var(--led);font-size:.72rem;font-weight:700}
+  .scroll{flex:1;overflow-y:auto;padding:.7rem .75rem 2rem}
+  h3{font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;color:var(--soft);
+     font-weight:700;margin:1rem 0 .45rem}
+  h3:first-child{margin-top:0}
+  input{font:inherit;font-size:.82rem;padding:.45rem .55rem;border:1px solid var(--line);
+        border-radius:6px;background:#0E1218;color:#fff;width:100%}
+  input:focus-visible{outline:2px solid var(--led)}
+  .g{display:flex;gap:.35rem;margin-bottom:.35rem}
+  .g label{flex:1}
+  .g span{display:block;font-size:.58rem;color:var(--soft);margin-bottom:.15rem;text-transform:uppercase}
+  .btn{font:inherit;font-size:.78rem;font-weight:700;cursor:pointer;background:var(--signage);
+       color:#fff;border:0;border-radius:6px;padding:.5rem .7rem;width:100%}
+  .btn.alt{background:#232A35}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:2px solid var(--led);outline-offset:1px}
+  .msg{font-size:.68rem;color:#C3D2E8;margin-top:.45rem;min-height:1rem}
+
+  .stats{display:flex;gap:.9rem;flex-wrap:wrap;margin-top:.3rem}
+  .st b{display:block;font-size:.95rem;font-variant-numeric:tabular-nums}
+  .st b.led{color:var(--led)}
+  .st span{color:var(--soft);font-size:.55rem;text-transform:uppercase}
+
+  .r{display:flex;gap:.5rem;align-items:center;padding:.42rem .3rem;border-top:1px solid var(--line);cursor:pointer}
+  .r:hover{background:#1B222C}
+  .r .pz{flex:0 0 4rem;font-weight:800;font-size:.85rem;font-variant-numeric:tabular-nums;color:var(--green)}
+  .r .pz.est{color:var(--soft);font-weight:600;font-size:.76rem}
+  .r .nm{flex:1;min-width:0;font-size:.76rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .r .nm em{font-style:normal;color:var(--soft);font-size:.66rem}
+  .r .ir{background:var(--signage);color:#fff;border-radius:5px;padding:.22rem .4rem;
+         font-size:.63rem;font-weight:700;text-decoration:none}
+  .avoid{display:flex;gap:.4rem;align-items:center;color:#AEB7C4;font-size:.68rem;
+         margin:.45rem 0 .1rem;cursor:pointer}
+  .avoid input{accent-color:#FFB000}
+  .none{color:var(--soft);font-size:.68rem;line-height:1.4;padding:.3rem 0}
+  .kmpill{flex:0 0 3.2rem;font-size:.68rem;font-weight:800;color:var(--led);font-variant-numeric:tabular-nums}
+
+  .chips{display:flex;gap:.25rem;overflow-x:auto;padding:.5rem .75rem;border-bottom:1px solid var(--line);
+         scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chips button{font:inherit;font-size:.65rem;font-weight:700;white-space:nowrap;cursor:pointer;
+        border:0;border-radius:999px;padding:.25rem .5rem;background:#232A35;color:#AEB7C4}
+  .chips button[aria-pressed="true"]{background:var(--led);color:#11151C}
+
+  .dot{transform:translate(-8px,-8px);width:16px;height:16px;border-radius:50%;
+       border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.45)}
+  .dot.cheap{border-color:var(--led)}
+  .dot.top{box-shadow:0 0 0 3px var(--green),0 1px 4px rgba(0,0,0,.5)}
+  .dot.stop{width:22px;height:22px;transform:translate(-11px,-11px);border:3px solid var(--led)}
+  .grp{transform:translate(-14px,-14px);width:28px;height:28px;border-radius:50%;
+       background:rgba(11,60,125,.92);border:2px solid #fff;color:#fff;display:grid;place-items:center;
+       font-size:.68rem;font-weight:800}
+  .tag{position:absolute;left:11px;top:-8px;background:rgba(255,255,255,.96);border-radius:4px;
+       padding:.03rem .26rem;font-size:.64rem;font-weight:700;color:var(--ink);white-space:nowrap;
+       box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .tag em{font-style:normal;color:#0A7A3C;font-weight:800}
+
+  @media(max-width:760px){
+    body{flex-direction:column}
+    #map{flex:1 1 55%}
+    aside{width:auto;flex:0 0 45%;border-left:0;border-top:2px solid #000}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<aside>
+  <div class="hd"><b>RUTA · DIÉSEL · EUROPA</b><i id="ref">—</i></div>
+  <div class="chips" id="chips"></div>
+  <div class="scroll">
+
+    <h3>Trayecto</h3>
+    <div class="g"><label><span>Desde</span><input id="from" placeholder="Madrid"></label></div>
+    <div class="g"><label><span>Hasta</span><input id="to" placeholder="Ámsterdam"></label></div>
+    <div class="g">
+      <label><span>Autonomía km</span><input id="range" type="number" value="750"></label>
+      <label><span>Consumo l/100</span><input id="cons" type="number" value="6.5" step="0.1"></label>
+      <label><span>Reserva %</span><input id="res" type="number" value="10"></label>
+    </div>
+    <button class="btn" id="go">Calcular ruta y paradas</button>
+  <label class="avoid"><input type="checkbox" id="onlyroute" checked> Ver solo las del trayecto</label>
+  <label class="avoid"><input type="checkbox" id="avoid"> Evitar repostar en Bélgica y Países Bajos</label>
+    <div class="msg" id="msg">Escribe origen y destino.</div>
+
+    <div id="sum" style="display:none">
+      <h3>Resumen</h3>
+      <div class="stats">
+        <div class="st"><b id="s-km">—</b><span>Distancia</span></div>
+        <div class="st"><b id="s-h">—</b><span>Tiempo</span></div>
+        <div class="st"><b id="s-l">—</b><span>Diésel</span></div>
+        <div class="st"><b class="led" id="s-stops">—</b><span>Repostajes</span></div>
+        <div class="st"><b id="s-cost">—</b><span>Coste est.</span></div>
+      </div>
+    </div>
+
+    <h3>Plan de repostajes</h3>
+    <div id="plan"><div class="none">Calcula una ruta para ver dónde conviene parar.</div></div>
+
+    <h3>Más baratas de lo que ves</h3>
+    <div id="best"><div class="none">Mueve el mapa sobre España o Francia para ver precios oficiales por estación.</div></div>
+
+    <h3>Fuentes</h3>
+    <div class="none" id="src">
+      España: MITECO · Francia: Min. Économie, cada 10 min · Alemania: Tankerkönig con clave propia (?tk=).<br>
+      Países Bajos y Bélgica no publican precio por estación: se usa la media real de cada país.
+    </div>
+  </div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var CHEAP=["tango","tinq","tamoil","fieten","kreuze","firezone","ballenoil","plenoil","petroprix",
+             "alcampo","carrefour","eroski","bonarea","costco","makro","argos","gt24","ok ","sprinter"];
+  var COLORS={tango:"#C8102E",tinq:"#E4572E",tamoil:"#0B6E4F",shell:"#C8A200",bp:"#0B7A3B",
+    esso:"#1B4F9C",total:"#E4572E",gulf:"#E87722",q8:"#0B3C7D",avia:"#C8102E",texaco:"#B01116",
+    repsol:"#F58220",cepsa:"#0069B4",galp:"#F36F21",petronor:"#005CA9",ballenoil:"#F7A600",
+    plenoil:"#00A0DF",alcampo:"#E30613",carrefour:"#004E9F",eroski:"#E4002B",bonarea:"#00843D",
+    petroprix:"#E30613",moeve:"#0069B4",lukoil:"#7B1FA2",argos:"#1C3F94",haan:"#6A1B9A"};
+  var OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+  var CBS="https://opendata.cbs.nl/ODataApi/OData/";
+  var ES_API="https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/";
+  var ES_BOX={s:35.9,w:-9.6,n:44.0,e:4.4}, FR_BOX={s:41.3,w:-5.2,n:51.2,e:8.3},
+      DE_BOX={s:47.2,w:5.8,n:55.1,e:15.1};
+  var FR_DS="prix-des-carburants-en-france-flux-instantane-v2";
+
+  var $=function(id){ return document.getElementById(id); };
+  function say(t){ $("msg").textContent=t; }
+  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
+  function eur(v,d){ return v==null?"—":v.toFixed(d==null?3:d).replace(".",",")+" €"; }
+  function hav(a,b,c,d){
+    var R=6371,pi=Math.PI/180,x=(c-a)*pi,y=(d-b)*pi;
+    var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a*pi)*Math.cos(c*pi)*Math.sin(y/2)*Math.sin(y/2);
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+  function box(b,B){ return b.getSouth()<B.n&&b.getNorth()>B.s&&b.getWest()<B.e&&b.getEast()>B.w; }
+  function num(v){ var n=parseFloat(String(v).replace(",",".")); return isNaN(n)?NaN:n; }
+
+  /* ------------- Mapa ------------- */
+  var map=L.map("map",{zoomControl:true}).setView([46.5,2.5],5);
+  var TILES=[
+    {u:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+     o:{subdomains:"abcd",maxZoom:20,attribution:"&copy; OpenStreetMap &copy; CARTO"}},
+    {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+     o:{maxZoom:19,attribution:"Esri, &copy; OpenStreetMap"}}];
+  var tl=null,terr=0;
+  function tiles(i){
+    if(i>=TILES.length) return;
+    terr=0; if(tl) map.removeLayer(tl);
+    tl=L.tileLayer(TILES[i].u,TILES[i].o).addTo(map);
+    tl.on("tileerror",function(){ terr++; if(terr>8) tiles(i+1); });
+  }
+  tiles(0);
+  var routeLayer=L.layerGroup().addTo(map), pinLayer=L.layerGroup().addTo(map);
+
+  /* ------------- Estado ------------- */
+  var store={}, markers={}, loaded=[], active=null, topId=null;
+  var stopIds={}, routeCo=null, routeKm=0, corridor=[];
+  function add(s){ if(s&&!store[s.id]) store[s.id]=s; }
+  function brandOf(raw){
+    var key=String(raw||"").toLowerCase(),k,h=0,i;
+    for(k in COLORS){ if(key.indexOf(k)!==-1)
+      return {name:k.charAt(0).toUpperCase()+k.slice(1),key:k,color:COLORS[k]}; }
+    if(!key) return {name:"Otras",key:"otras",color:"#5A6473"};
+    var first=String(raw).split(/[\s\-,.]/)[0];
+    for(i=0;i<key.length;i++) h=(h*31+key.charCodeAt(i))%360;
+    return {name:first,key:first.toLowerCase(),color:"hsl("+h+",48%,42%)"};
+  }
+  function isCheap(txt){
+    var t=String(txt||"").toLowerCase();
+    return CHEAP.some(function(c){ return t.indexOf(c)!==-1; });
+  }
+
+  /* ------------- Medias oficiales NL (CBS) ------------- */
+  var NL={nat:null,unm:null,non:null,mot:null};
+  (function cbs(){
+    var d=new Date(); d.setDate(d.getDate()-45);
+    var desde=d.toISOString().slice(0,10).replace(/-/g,"");
+    fetch(CBS+"80416ned/TypedDataSet?$format=json&$select=Perioden,Diesel_2&$filter=Perioden%20ge%20'"+desde+"'")
+      .then(function(r){ return r.json(); }).then(function(j){
+        var v=(j.value||[]).filter(function(x){ return x.Diesel_2!=null; });
+        if(!v.length) return;
+        NL.nat=v[v.length-1].Diesel_2;
+        $("ref").textContent="NL "+eur(NL.nat)+"/l";
+      }).catch(function(){});
+    fetch(CBS+"81567NED/TypedDataSet?$format=json")
+      .then(function(r){ return r.json(); })
+      .then(function(ds){
+        var rows=(ds.value||[]).filter(function(x){ return x.Diesel_2!=null; });
+        if(!rows.length) return;
+        var dim=null,k;
+        for(k in rows[0]){
+          if(k==="ID"||k==="Perioden") continue;
+          if(/^(Benzine|Diesel|Lpg)/i.test(k)) continue;
+          dim=k; break;
+        }
+        if(!dim) return;
+        var per=rows[rows.length-1].Perioden;
+        var ult=rows.filter(function(x){ return x.Perioden===per; });
+        return fetch(CBS+"81567NED/"+dim+"?$format=json")
+          .then(function(r){ return r.json(); })
+          .then(function(cat){
+            var tit={};
+            (cat.value||[]).forEach(function(c){ tit[String(c.Key).trim()]=String(c.Title||"").toLowerCase(); });
+            ult.forEach(function(x){
+              var t=tit[String(x[dim]||"").trim()]||"";
+              if(/onbemand/.test(t)) NL.unm=x.Diesel_2;
+              else if(/niet/.test(t)) NL.non=x.Diesel_2;
+              else if(/snelweg/.test(t)) NL.mot=x.Diesel_2;
+            });
+          })
+          .catch(function(){})
+          .then(function(){
+            // Respaldo: si no hay etiquetas legibles, ordenar los tres valores del mes
+            if(NL.unm==null&&NL.non==null&&NL.mot==null&&ult.length>=3){
+              var v=ult.map(function(x){ return x.Diesel_2; }).sort(function(a,b){ return a-b; });
+              NL.unm=v[0]; NL.non=v[1]; NL.mot=v[v.length-1];
+            }
+            if(NL.unm!=null||NL.mot!=null)
+              $("ref").textContent="NL "+(NL.unm!=null?eur(NL.unm,2):"—")+" a "+(NL.mot!=null?eur(NL.mot,2):"—");
+            render();
+          });
+      }).catch(function(){});
+  })();
+
+  /* Media nacional de diésel por país: OpenVan.camp (CC BY 4.0, sin clave, con CORS).
+     Se actualiza semanalmente desde fuentes oficiales, incluido el Boletín Petrolero de la UE. */
+  var NAT={};
+  (function nacionales(){
+    fetch("https://openvan.camp/api/fuel/prices?source=ruta-diesel")
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var d=j.data||{},k;
+        for(k in d){ if(d[k].prices&&d[k].prices.diesel!=null) NAT[k]=d[k].prices.diesel; }
+        var t=$("src");
+        if(t) t.innerHTML+='<br>Medias por país: <a href="https://openvan.camp/" '+
+          'target="_blank" rel="noopener" style="color:#8B94A2">OpenVan.camp</a> (CC BY 4.0), '+
+          'actualizadas el '+(j.meta&&j.meta.updated_at?j.meta.updated_at.slice(0,10):"—")+".";
+        render();
+      }).catch(function(){});
+  })();
+
+  // País por coordenadas. La franja fronteriza BE/NL se resuelve por latitud y por Limburgo.
+  function paisDe(lat,lon){
+    // Luxemburgo
+    if(lat>49.44&&lat<50.19&&lon>5.73&&lon<6.53&&!(lat>49.90&&lon<5.90)) return "LU";
+    // Iberia: los Pirineos como diagonal de Hendaya a Cap de Creus
+    if(lon>-9.65&&lon<3.35&&lat>35.90&&lat<43.85){
+      var pir = lon<-1.79 ? 43.85 : 43.36-0.1875*(lon+1.79);
+      if(lat<pir) return (lon<-6.15&&lat>36.90&&lat<42.20)?"PT":"ES";
+    }
+    // Bélgica: frontera con Francia como dos tramos diagonales
+    if(lon>2.53&&lon<6.42&&lat>49.45&&lat<51.56){
+      var be = lon<4.17 ? 51.09-0.5*(lon-2.55) : 50.28-0.44*(lon-4.17);
+      if(lat>be) return (lat>51.45||(lat>50.75&&lon>5.75))?"NL":"BE";
+    }
+    // Países Bajos
+    if(lat>51.45&&lat<53.70&&lon>3.30&&lon<7.25) return "NL";
+    if(lat>50.75&&lat<51.50&&lon>5.75&&lon<6.25) return "NL";
+    if(lat>47.20&&lat<55.10&&lon>5.80&&lon<15.10) return "DE";
+    if(lat>45.80&&lat<47.81&&lon>5.95&&lon<10.50) return "CH";
+    if(lat>36.60&&lat<47.10&&lon>6.60&&lon<18.60) return "IT";
+    if(lat>41.30&&lat<51.20&&lon>-5.20&&lon<8.30) return "FR";
+    return null;
+  }
+
+  function refPrice(s){
+    if(s.price!=null) return s.price;                       // precio real de esa estación
+    var cc=s.cc||(s.cc=paisDe(s.lat,s.lon));
+    if(cc==="NL"){                                          // desglose oficial del CBS
+      if(s.motorway&&NL.mot!=null) return NL.mot;
+      if((s.cheap||s.unmanned)&&NL.unm!=null) return NL.unm;
+      if(NL.non!=null) return NL.non;
+    }
+    if(cc&&NAT[cc]!=null) return NAT[cc];                   // media real del país
+    return NL.nat;
+  }
+
+  /* ------------- España ------------- */
+  var esState=0;
+  function esLoad(){
+    if(esState) return;
+    esState=1; say("Descargando precios oficiales de España…");
+    fetch(ES_API,{headers:{Accept:"application/json"}})
+      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(j){
+        var list=j.ListaEESSPrecio||j.ListaEESSprecio||[];
+        if(!list.length) throw new Error("vacio");
+        var k0=list[0],kLat,kLon,kRot,kPre,kMun,kDir,k;
+        for(k in k0){
+          var kk=k.toLowerCase();
+          if(/latitud/.test(kk)) kLat=k;
+          else if(/longitud/.test(kk)) kLon=k;
+          else if(/tulo/.test(kk)) kRot=k;
+          else if(/gasoleo a|gasóleo a/.test(kk)&&!/premium/.test(kk)) kPre=k;
+          else if(/municipio/.test(kk)) kMun=k;
+          else if(/direcci/.test(kk)) kDir=k;
+        }
+        if(!kLat||!kLon||!kPre) throw new Error("formato");
+        var n=0;
+        list.forEach(function(e,i){
+          var lat=num(e[kLat]), lon=num(e[kLon]), pr=num(e[kPre]);
+          if(isNaN(lat)||isNaN(lon)||isNaN(pr)||!pr) return;
+          var rot=e[kRot]||"";
+          add({id:"es"+i,lat:lat,lon:lon,name:rot||"Gasolinera",
+            sub:(e[kDir]||"")+(e[kMun]?" · "+e[kMun]:""),brand:brandOf(rot),
+            price:pr,real:true,cheap:isCheap(rot)});
+          n++;
+        });
+        esState=2;
+        loaded.push({s:ES_BOX.s,w:ES_BOX.w,n:ES_BOX.n,e:ES_BOX.e});
+        say(n.toLocaleString("es")+" gasolineras españolas con precio oficial");
+        render();
+      }).catch(function(){ esState=3; scan(); });
+  }
+
+  /* ------------- Francia ------------- */
+  var frCache={};
+  function frIngest(recs){
+    var n=0;
+    recs.forEach(function(rec,i){
+      var f=rec.fields||rec,lat=NaN,lon=NaN,price=NaN,name="",sub="",k;
+      if(f.geom&&f.geom.lat!=null){ lat=num(f.geom.lat); lon=num(f.geom.lon); }
+      else if(f.geo_point_2d){
+        if(f.geo_point_2d.lat!=null){ lat=num(f.geo_point_2d.lat); lon=num(f.geo_point_2d.lon); }
+        else if(f.geo_point_2d.length===2){ lat=num(f.geo_point_2d[0]); lon=num(f.geo_point_2d[1]); }
+      }
+      if(isNaN(lat)&&f.latitude!=null){ lat=num(f.latitude); lon=num(f.longitude); }
+      if(Math.abs(lat)>90){ lat/=100000; lon/=100000; }
+      for(k in f){
+        var kk=k.toLowerCase();
+        if(isNaN(price)&&/gazole/.test(kk)&&/prix/.test(kk)) price=num(f[k]);
+        if(!name&&/enseigne|brand|marque/.test(kk)&&f[k]) name=String(f[k]);
+        if(!sub&&/adresse/.test(kk)&&f[k]) sub=String(f[k]);
+      }
+      if(!name) name=f.ville||"Estación";
+      if(isNaN(lat)||isNaN(lon)||isNaN(price)||!price) return;
+      add({id:"fr"+(f.id||rec.recordid||(lat+"_"+lon+"_"+i)),lat:lat,lon:lon,name:name,
+        sub:sub+(f.ville?" · "+f.ville:""),brand:brandOf(name),price:price,real:true,cheap:isCheap(name)});
+      n++;
+    });
+    return n;
+  }
+  function frLoad(b){
+    var key=[b.getSouth().toFixed(2),b.getWest().toFixed(2),b.getNorth().toFixed(2),b.getEast().toFixed(2)].join(",");
+    if(frCache[key]) return; frCache[key]=1;
+    var bbox=b.getSouth()+","+b.getWest()+","+b.getNorth()+","+b.getEast();
+    var v2="https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"+FR_DS+
+           "/records?limit=100&where="+encodeURIComponent("within_bbox(geom,"+bbox+")");
+    var v1="https://data.economie.gouv.fr/api/records/1.0/search/?dataset="+FR_DS+
+           "&rows=200&geofilter.bbox="+bbox;
+    fetch(v2).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(j){ if(!frIngest(j.results||[])) throw new Error("vacio"); render(); })
+      .catch(function(){
+        fetch(v1).then(function(r){ return r.json(); })
+          .then(function(j){ frIngest(j.records||[]); render(); }).catch(function(){});
+      });
+  }
+
+  /* ------------- Alemania (clave propia) ------------- */
+  var deKey=(location.search.match(/[?&]tk=([^&]+)/)||[])[1], deCache={};
+  function deLoad(b){
+    if(!deKey) return false;
+    var c=b.getCenter(),k=c.lat.toFixed(2)+","+c.lng.toFixed(2);
+    if(deCache[k]) return true; deCache[k]=1;
+    fetch("https://creativecommons.tankerkoenig.de/json/list.php?lat="+c.lat.toFixed(5)+"&lng="+
+      c.lng.toFixed(5)+"&rad=25&sort=dist&type=diesel&apikey="+encodeURIComponent(deKey))
+      .then(function(r){ return r.json(); }).then(function(j){
+        (j.stations||[]).forEach(function(st){
+          if(!st.diesel) return;
+          add({id:"de"+st.id,lat:st.lat,lon:st.lng,name:st.brand||st.name||"Tankstelle",
+            sub:(st.street||"")+" "+(st.place||""),brand:brandOf(st.brand||st.name),
+            price:st.diesel,real:true,cheap:isCheap(st.brand||st.name)});
+        });
+        render();
+      }).catch(function(){});
+    return true;
+  }
+
+  /* ------------- OpenStreetMap (resto) ------------- */
+  var busy=false,timer=null;
+  function overpass(q){
+    function ask(i){
+      return fetch(OVERPASS[i],{method:"POST",
+        headers:{"Content-Type":"application/x-www-form-urlencoded"},
+        body:"data="+encodeURIComponent(q)})
+        .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+        .catch(function(e){ if(i+1<OVERPASS.length) return ask(i+1); throw e; });
+    }
+    return ask(0);
+  }
+  /* ---- Precios propios de NL y BE: precios.json generado por la Action ---- */
+  var propioOK=null;
+  (function propios(){
+    fetch("precios.json?v="+Math.floor(Date.now()/3600000))
+      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(j){
+        (j.stations||[]).forEach(function(e){
+          if(e.price==null) return;
+          add({id:e.id,lat:e.lat,lon:e.lon,
+               name:e.name||e.brand,sub:(e.city||"")+" · "+e.source,
+               brand:brandOf(e.brand||e.source),price:e.price,real:true,
+               cheap:isCheap(String(e.brand||"")),cc:e.country});
+        });
+        propioOK=(j.stations||[]).length;
+        var t=$("src");
+        if(t) t.innerHTML+="<br>NL y BE: "+propioOK+" estaciones propias, actualizado "+
+          String(j.updated||"").slice(0,16).replace("T"," ")+".";
+        render();
+      })
+      .catch(function(){ propioOK=0; });   // sin archivo aún: se sigue con las medias
+  })();
+
+  function osmIngest(els){
+    var aut={};
+    els.forEach(function(el){
+      if(el.tags===undefined&&el.lat===undefined&&el.center===undefined) aut[el.type+"/"+el.id]=1;
+    });
+    els.forEach(function(el){
+      var t=el.tags||{};
+      var lat=el.lat!=null?el.lat:(el.center&&el.center.lat);
+      var lon=el.lon!=null?el.lon:(el.center&&el.center.lon);
+      if(lat==null||lon==null||t["fuel:diesel"]==="no") return;
+      var raw=t.brand||t.operator||t.name||"";
+      add({id:el.type+"/"+el.id,lat:lat,lon:lon,name:t.name||raw||"Gasolinera",sub:"",
+        brand:brandOf(raw),price:null,real:false,
+        motorway:!!aut[el.type+"/"+el.id],
+        cheap:isCheap(raw+" "+(t.name||"")),
+        unmanned:t.self_service==="yes"||t.automated==="yes"||t.attendant==="no"});
+    });
+  }
+  function inLoaded(b){
+    for(var i=0;i<loaded.length;i++){
+      var l=loaded[i];
+      if(b.getSouth()>=l.s&&b.getNorth()<=l.n&&b.getWest()>=l.w&&b.getEast()<=l.e) return true;
+    }
+    return false;
+  }
+  function scan(){
+    if(busy||map.getZoom()<10) return;
+    var b=map.getBounds().pad(.25);
+    if(inLoaded(b)) return;
+    busy=true;
+    var bb=b.getSouth().toFixed(4)+","+b.getWest().toFixed(4)+","+
+           b.getNorth().toFixed(4)+","+b.getEast().toFixed(4);
+    var q="[out:json][timeout:30];"+
+      'way["highway"="motorway"]('+bb+")->.mw;"+
+      'nwr["amenity"="fuel"]('+bb+")->.todas;"+
+      "nwr.todas(around.mw:130)->.aut;"+
+      ".todas out center 300;.aut out ids;";
+    overpass(q).then(function(d){
+      osmIngest(d.elements||[]);
+      loaded.push({s:b.getSouth(),w:b.getWest(),n:b.getNorth(),e:b.getEast()});
+      if(loaded.length>50) loaded.shift();
+      render();
+    }).catch(function(){}).then(function(){ busy=false; });
+  }
+
+  /* ------------- Pintado ------------- */
+  document.addEventListener("change",function(e){
+    if(e.target&&e.target.id==="onlyroute") render();
+  });
+  function soloRuta(){
+    var c=$("onlyroute");
+    return corridor.length>0 && c && c.checked;
+  }
+  function visible(){
+    var b=map.getBounds(),out=[],id;
+    for(id in store){
+      var s=store[id];
+      if(s.lat<b.getSouth()||s.lat>b.getNorth()||s.lon<b.getWest()||s.lon>b.getEast()) continue;
+      if(active&&s.brand.key!==active) continue;
+      if(soloRuta()&&s.km==null) continue;
+      out.push(s);
+    }
+    return out;
+  }
+  function render(){
+    pinLayer.clearLayers(); markers={};
+    var z=map.getZoom(), vis=visible();
+    var conPrecio=vis.filter(function(s){ return s.real&&s.price; })
+                     .sort(function(a,b){ return a.price-b.price; });
+    topId=conPrecio.length?conPrecio[0].id:null;
+
+    if(z<12){
+      var cell=58,g={},out=[];
+      vis.forEach(function(s){
+        var p=map.latLngToContainerPoint([s.lat,s.lon]);
+        var k=Math.floor(p.x/cell)+"|"+Math.floor(p.y/cell);
+        if(!g[k]){ g[k]={lat:0,lon:0,n:0,items:[]}; out.push(g[k]); }
+        g[k].lat+=s.lat; g[k].lon+=s.lon; g[k].n++; g[k].items.push(s);
+      });
+      out.forEach(function(c){
+        c.lat/=c.n; c.lon/=c.n;
+        if(c.n===1){ pin(c.items[0],null); return; }
+        L.marker([c.lat,c.lon],{icon:L.divIcon({className:"",iconSize:null,
+          html:'<div class="grp">'+c.n+"</div>"})})
+          .on("click",function(){ map.setView([c.lat,c.lon],Math.min(z+3,15)); }).addTo(pinLayer);
+      });
+    } else {
+      var boxes=[];
+      vis.sort(function(a,b){
+        if(a.real!==b.real) return a.real?-1:1;
+        return (a.price||9)-(b.price||9);
+      }).forEach(function(s){ pin(s,boxes); });
+    }
+    listBest(conPrecio);
+    chips(vis);
+  }
+  function pin(s,boxes){
+    var tag="", cls="dot"+(s.cheap?" cheap":"")+(s.id===topId?" top":"")+(stopIds[s.id]?" stop":"");
+    if(boxes&&(s.real||stopIds[s.id])){
+      var p=map.latLngToContainerPoint([s.lat,s.lon]);
+      var txt=s.name.slice(0,15)+(s.price?" "+eur(s.price):"");
+      var w=txt.length*6.2+12;
+      var bx={x1:p.x+9,y1:p.y-17,x2:p.x+9+w,y2:p.y+1},free=true;
+      for(var i=0;i<boxes.length;i++){
+        var b=boxes[i];
+        if(!(bx.x2<b.x1||bx.x1>b.x2||bx.y2<b.y1||bx.y1>b.y2)){ free=false; break; }
+      }
+      if(free){
+        boxes.push(bx);
+        tag='<span class="tag">'+esc(s.name.slice(0,15))+
+            (s.price?' <em>'+eur(s.price)+'</em>':"")+"</span>";
+      }
+    }
+    markers[s.id]=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"",iconSize:null,
+      html:'<div style="position:relative"><div class="'+cls+'" style="background:'+s.brand.color+'"></div>'+tag+"</div>"})})
+      .bindPopup("<b>"+esc(s.name)+"</b>"+(s.sub?"<br>"+esc(s.sub):"")+
+        (s.price?"<br><b>"+eur(s.price)+"</b> por litro (oficial)":"<br>Sin precio oficial publicado")+
+        '<br><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+
+        s.lat+","+s.lon+'">Cómo llegar</a>').addTo(pinLayer);
+  }
+  function row(host,pz,est,nm,sub,s){
+    var d=document.createElement("div");
+    d.className="r";
+    d.innerHTML='<span class="pz'+(est?" est":"")+'">'+pz+'</span>'+
+      '<span class="nm">'+esc(nm)+' <em>'+esc(sub)+'</em></span>'+
+      '<a class="ir" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+
+      s.lat+','+s.lon+'">Ir</a>';
+    d.addEventListener("click",function(e){
+      if(e.target.className==="ir") return;
+      map.setView([s.lat,s.lon],Math.max(map.getZoom(),14));
+      setTimeout(function(){ if(markers[s.id]) markers[s.id].openPopup(); },350);
+    });
+    host.appendChild(d);
+  }
+  function listBest(conPrecio){
+    var host=$("best"); host.innerHTML="";
+    if(!conPrecio.length){
+      host.innerHTML='<div class="none">Ninguna estación con precio oficial en esta vista. '+
+        'En Países Bajos y Bélgica no existe ese dato abierto: por eso no invento un número por gasolinera.</div>';
+      return;
+    }
+    var c=map.getCenter();
+    conPrecio.slice(0,6).forEach(function(s){
+      row(host,eur(s.price),false,s.name,"· "+hav(c.lat,c.lng,s.lat,s.lon).toFixed(1)+" km",s);
+    });
+  }
+  function chips(vis){
+    var c={},order=[];
+    vis.forEach(function(s){
+      if(!c[s.brand.key]){ c[s.brand.key]={n:0,b:s.brand}; order.push(s.brand.key); }
+      c[s.brand.key].n++;
+    });
+    order.sort(function(a,b){ return c[b].n-c[a].n; });
+    var host=$("chips"); host.innerHTML="";
+    function mk(t,on,fn){
+      var b=document.createElement("button");
+      b.textContent=t; b.setAttribute("aria-pressed",on?"true":"false"); b.onclick=fn;
+      host.appendChild(b);
+    }
+    mk("Todas",!active,function(){ active=null; render(); });
+    order.slice(0,10).forEach(function(k){
+      mk(c[k].b.name+" "+c[k].n,active===k,function(){ active=(active===k?null:k); render(); });
+    });
+  }
+
+  map.on("moveend zoomend",function(){
+    render();
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      var b=map.getBounds();
+      if(box(b,ES_BOX)&&esState<2) esLoad();
+      if(box(b,FR_BOX)&&map.getZoom()>=9) frLoad(b.pad(.15));
+      if(box(b,DE_BOX)) deLoad(b.pad(.1));
+      scan();
+    },450);
+  });
+
+  /* ------------- Ruta + corredor por tramos ------------- */
+  function geocode(q){
+    return fetch("https://photon.komoot.io/api/?limit=1&q="+encodeURIComponent(q))
+      .then(function(r){ if(!r.ok) throw new Error("x"); return r.json(); })
+      .then(function(j){
+        if(!j.features||!j.features.length) throw new Error("x");
+        var c=j.features[0].geometry.coordinates; return {lon:c[0],lat:c[1]};
+      }).catch(function(){
+        return fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q="+encodeURIComponent(q))
+          .then(function(r){ return r.json(); }).then(function(a){
+            if(!a.length) throw new Error("No encuentro «"+q+"»");
+            return {lon:parseFloat(a[0].lon),lat:parseFloat(a[0].lat)};
+          });
+      });
+  }
+  function chunk(co){
+    var out=[],cur=[],acc=0,i;
+    for(i=0;i<co.length;i++){
+      if(i===0){ cur.push(co[i]); continue; }
+      acc+=hav(co[i-1][1],co[i-1][0],co[i][1],co[i][0]);
+      if(acc>=9){ cur.push(co[i]); acc=0; }
+      if(cur.length>=18){ out.push(cur); cur=[co[i]]; }
+    }
+    if(cur.length>1) out.push(cur);
+    return out.slice(0,40);
+  }
+  function loadCorridor(co,cum,done){
+    var ch=chunk(co), seen={}, hechos=0;
+    corridor=[];
+
+    function near(lat,lon){
+      var best=0,bd=1e9;
+      for(var k=0;k<co.length;k+=4){
+        var d=hav(lat,lon,co[k][1],co[k][0]);
+        if(d<bd){ bd=d; best=k; }
+      }
+      return {km:cum[best],dist:bd};
+    }
+
+    // Se cargan primero los tramos más cercanos a lo que hay en pantalla
+    var c=map.getCenter();
+    var orden=ch.map(function(pts,idx){
+      var m=pts[Math.floor(pts.length/2)];
+      return {pts:pts,idx:idx,d:hav(c.lat,c.lng,m[1],m[0])};
+    }).sort(function(a,b){ return a.d-b.d; });
+
+    function pedir(t){
+      var around=t.pts.map(function(x){ return x[1].toFixed(4)+","+x[0].toFixed(4); }).join(",");
+      return overpass('[out:json][timeout:35];nwr["amenity"="fuel"](around:10000,'+around+");out center 400;")
+        .then(function(d){ osmIngest(d.elements||[]); })
+        .catch(function(){})
+        .then(function(){
+          var id;
+          for(id in store){
+            var st=store[id];
+            if(seen[id]||st.km!=null) continue;
+            var r=near(st.lat,st.lon);
+            if(r.dist<=12){ st.km=r.km; st.off=r.dist; corridor.push(st); seen[id]=1; }
+          }
+          hechos++;
+          say("Cargando gasolineras del trayecto… "+hechos+" de "+orden.length+
+              " tramos · "+corridor.length+" estaciones");
+          render();
+        });
+    }
+
+    // Lotes de tres peticiones en paralelo: doce tramos en cuatro rondas
+    function lote(i){
+      if(i>=orden.length){
+        say(corridor.length+" gasolineras en el trayecto");
+        done(); return;
+      }
+      Promise.all(orden.slice(i,i+3).map(pedir))
+        .then(function(){ setTimeout(function(){ lote(i+3); },150); });
+    }
+    lote(0);
+  }
+
+  var BOX_NLBE={s:49.45,w:2.5,n:53.7,e:7.3};   // Bélgica + Países Bajos + Luxemburgo
+  function caro(s){   // países sin precio oficial por estación y con diésel más caro
+    return s.lat>BOX_NLBE.s&&s.lat<BOX_NLBE.n&&s.lon>BOX_NLBE.w&&s.lon<BOX_NLBE.e;
+  }
+
+  // Plan óptimo del viaje completo (programación dinámica), no ventana a ventana
+  function planStops(km,range,reserve){
+    var usable=range*(1-reserve/100);
+    var evitar=$("avoid")&&$("avoid").checked;
+    var r=dp(km,usable,evitar);
+    if(!r.length&&evitar) r=dp(km,usable,false);   // si es imposible, se permite
+    return r;
+  }
+
+  function dp(km,usable,evitar){
+    // Un candidato por cada 8 km: el más barato del tramo. Acota el cálculo.
+    var cubos={}, list=[];
+    corridor.forEach(function(s){
+      if(s.km<=0||s.km>=km) return;
+      if(evitar&&caro(s)) return;
+      var b=Math.floor(s.km/8), p=coste(s);
+      if(!cubos[b]||p<cubos[b].p) cubos[b]={s:s,p:p};
+    });
+    Object.keys(cubos).forEach(function(k){ list.push(cubos[k].s); });
+    list.sort(function(a,b){ return a.km-b.km; });
+
+    var nodos=[{km:0,inicio:true}].concat(list,[{km:km,fin:true}]);
+    var n=nodos.length, mejor=new Array(n), padre=new Array(n), i, j;
+    for(i=0;i<n;i++){ mejor[i]=Infinity; padre[i]=-1; }
+    mejor[0]=0;
+    for(i=0;i<n;i++){
+      if(mejor[i]===Infinity) continue;
+      var pi=nodos[i].inicio?0:coste(nodos[i]);
+      for(j=i+1;j<n;j++){
+        var d=nodos[j].km-nodos[i].km;
+        if(d>usable) break;
+        var c=mejor[i]+d*pi;          // se compra en i lo justo para llegar a j
+        if(c<mejor[j]-1e-9){ mejor[j]=c; padre[j]=i; }
+      }
+    }
+    if(mejor[n-1]===Infinity) return [];
+    var ruta=[], k=n-1;
+    while(k>0){ if(!nodos[k].fin) ruta.unshift(nodos[k]); k=padre[k]; }
+    return ruta;
+  }
+
+  function coste(s){
+    var p=refPrice(s)||9;
+    if(!s.real) p+=0.04;            // penaliza el dato no verificado
+    if(s.off>6) p+=0.02;            // penaliza el desvío
+    return p;
+  }
+
+  function planStopsViejo(km,range,reserve){
+    var usable=range*(1-reserve/100);
+    var list=corridor.slice().sort(function(a,b){ return a.km-b.km; });
+    var plan=[],pos=0,guard=0;
+    function score(s){
+      var p=refPrice(s)||9;
+      if(!s.real) p+=0.04;          // penaliza el dato no verificado
+      if(s.off>6) p+=0.02;          // penaliza el desvío largo
+      return p;
+    }
+    while(km-pos>usable&&guard++<25){
+      var hi=pos+usable, lo=pos+usable*0.5;
+      var c=list.filter(function(s){ return s.km>lo&&s.km<=hi; });
+      if(!c.length) c=list.filter(function(s){ return s.km>pos+5&&s.km<=hi; });
+      if(!c.length) break;
+      c.sort(function(a,b){ return score(a)-score(b); });
+      plan.push(c[0]); pos=c[0].km;
+    }
+    return plan;
+  }
+
+  function showPlan(plan,km,cons){
+    var host=$("plan"); host.innerHTML=""; stopIds={};
+    if(!plan.length){
+      host.innerHTML='<div class="none">Con esa autonomía llegas sin repostar. '+
+        'Aun así, salir con el depósito lleno del país más barato del trayecto ahorra dinero.</div>';
+      $("s-stops").textContent="0";
+      return;
+    }
+    var prev=0,total=0;
+    plan.forEach(function(s,i){
+      stopIds[s.id]=1;
+      var tramo=s.km-prev, lit=tramo*cons/100, p=refPrice(s);
+      if(p) total+=lit*p;
+      prev=s.km;
+      row(host,(p?eur(p):"—"),!s.real,(i+1)+". "+s.name,
+          "· km "+s.km.toFixed(0)+" · "+(s.off||0).toFixed(1)+" km del eje",s);
+    });
+    if($("avoid")&&$("avoid").checked&&plan.some(caro))
+      host.innerHTML+='<div class="none">No hay forma de cruzar sin repostar en Bélgica o '+
+        'Países Bajos con esa autonomía: te falta alcance. Sube la autonomía o acepta la parada.</div>';
+    var fin=(km-prev)*cons/100*(refPrice(plan[plan.length-1])||0);
+    $("s-stops").textContent=plan.length;
+    $("s-cost").textContent=eur(total+fin,0);
+    render();
+  }
+
+  $("go").addEventListener("click",function(){
+    var f=$("from").value.trim()||$("from").placeholder;
+    var t=$("to").value.trim()||$("to").placeholder;
+    var range=parseFloat($("range").value)||700;
+    var cons=parseFloat($("cons").value)||6.5;
+    var res=parseFloat($("res").value)||10;
+    say("Trazando ruta…"); routeLayer.clearLayers();
+    Promise.all([geocode(f),geocode(t)]).then(function(p){
+      return fetch("https://router.project-osrm.org/route/v1/driving/"+
+        p[0].lon+","+p[0].lat+";"+p[1].lon+","+p[1].lat+"?overview=full&geometries=geojson")
+        .then(function(r){ return r.json(); });
+    }).then(function(j){
+      if(!j.routes||!j.routes.length) throw new Error("no hay ruta");
+      var r=j.routes[0], co=r.geometry.coordinates;
+      var ll=co.map(function(c){ return [c[1],c[0]]; });
+      L.polyline(ll,{color:"#fff",weight:9,opacity:.9}).addTo(routeLayer);
+      L.polyline(ll,{color:"#0B3C7D",weight:5}).addTo(routeLayer);
+      map.fitBounds(L.latLngBounds(ll).pad(.05));
+      routeCo=co; routeKm=r.distance/1000;
+      var cum=[0],i;
+      for(i=1;i<co.length;i++) cum.push(cum[i-1]+hav(co[i-1][1],co[i-1][0],co[i][1],co[i][0]));
+      $("sum").style.display="block";
+      $("s-km").textContent=routeKm.toFixed(0)+" km";
+      $("s-h").textContent=(r.duration/3600).toFixed(1)+" h";
+      $("s-l").textContent=(routeKm*cons/100).toFixed(0)+" l";
+      loadCorridor(co,cum,function(){
+        var plan=planStops(routeKm,range,res);
+        showPlan(plan,routeKm,cons);
+        say(routeKm.toFixed(0)+" km · "+corridor.length+" gasolineras en el corredor · "+
+            plan.length+" parada"+(plan.length===1?"":"s"));
+      });
+    }).catch(function(e){ say(e.message||"No ha salido, reinténtalo"); });
+  });
+
+  if(navigator.geolocation) navigator.geolocation.getCurrentPosition(function(p){
+    map.setView([p.coords.latitude,p.coords.longitude],12);
+  },function(){},{timeout:8000});
+})();
+</script>
+</body>
+</html>
