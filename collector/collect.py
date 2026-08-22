@@ -14,6 +14,7 @@ Novedades frente a la v1:
 Normas: se respeta robots.txt, agente identificado y dos pasadas al dia.
 """
 
+import html as _html
 import json
 import re
 import sys
@@ -477,7 +478,106 @@ def dats24(c):
     return fuera
 
 
+# ---------------------------------------------------------------------------
+# Prijzenindex: publica el diesel por estacion de Belgica y Paises Bajos,
+# ciudad a ciudad, en tablas planas. Cada fila trae un enlace de navegacion
+# con las coordenadas dentro, el precio y la marca en el title del logotipo.
+# Es la via mas directa para cubrir los dos paises que no tienen dato abierto.
+# ---------------------------------------------------------------------------
+PI_BASE = "https://prijzenindex.nl"
+PI_RAICES = [("BE", "/brandstof/diesel-belgie"), ("NL", "/brandstof/diesel")]
+
+PI_CIUDAD = re.compile(r'href="(/brandstof/diesel(?:-belgie)?/[a-z0-9\-]+)"', re.I)
+PI_COORD = re.compile(r'destination=(-?\d+\.\d+),(-?\d+\.\d+)')
+PI_PRECIO = re.compile(r'&euro;|\u20ac|€')
+PI_NUM = re.compile(r'(\d[.,]\d{2,3})')
+PI_MARCA = re.compile(r'<img[^>]+title="([^"]{2,30})"', re.I)
+PI_VIEJO = re.compile(r'(?i)class="[^"]*(text-muted|text-secondary|grijs|gray|grey|old)[^"]*"')
+
+
+def sin_tags(t):
+    return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', t)).strip()
+
+
+def pi_ciudad(url, pais, muestra=False):
+    html, diag = traer(PI_BASE + url)
+    if html is None:
+        return [], diag
+    filas = re.split(r'<tr[\s>]', html)[1:]
+    if muestra and filas:
+        log(f"  fila de ejemplo: {filas[0][:500]}")
+    fuera = []
+    for f in filas:
+        c = PI_COORD.search(f)
+        if not c:
+            continue
+        lat, lon = a_coord(c.group(1)), a_coord(c.group(2))
+        if lat is None or lon is None:
+            continue
+        # el precio es el primer numero tras el simbolo del euro
+        pos = 0
+        m = PI_PRECIO.search(f)
+        if m:
+            pos = m.end()
+        n = PI_NUM.search(f, pos)
+        precio = a_float(n.group(1)) if n else None
+        if not precio:
+            continue
+        marca = ""
+        mm = PI_MARCA.search(f)
+        if mm:
+            marca = _html.unescape(mm.group(1)).strip()
+        texto = _html.unescape(sin_tags(f))
+        dir_ = ""
+        d = re.search(r'(?:€|EUR)?\s*\d[.,]\d{2,3}\s+(.{4,60}?)\s{2,}', texto)
+        if d:
+            dir_ = d.group(1)
+        else:
+            partes = texto.split()
+            dir_ = " ".join(partes[2:8]) if len(partes) > 8 else texto[:60]
+        fuera.append({"lat": lat, "lon": lon, "price": precio,
+                      "name": (marca or "Gasolinera"), "city": dir_,
+                      "viejo": bool(PI_VIEJO.search(f))})
+    return fuera, diag
+
+
+def prijzenindex(c):
+    todo, vistas = [], set()
+    for pais, raiz in PI_RAICES:
+        html, diag = traer(PI_BASE + raiz)
+        log(f"  indice {pais} {raiz} -> {diag}")
+        if html is None:
+            continue
+        ciudades = []
+        for m in PI_CIUDAD.finditer(html):
+            u = m.group(1)
+            if u.rstrip("/") == raiz.rstrip("/"):
+                continue
+            if u not in ciudades:
+                ciudades.append(u)
+        log(f"  ciudades encontradas en {pais}: {len(ciudades)}")
+        for i, u in enumerate(ciudades[:80]):
+            filas, diag = pi_ciudad(u, pais, muestra=(i == 0 and pais == "BE"))
+            nuevas = 0
+            for e in filas:
+                k = (round(e["lat"], 4), round(e["lon"], 4))
+                if k in vistas:
+                    continue
+                vistas.add(k)
+                e["brand"] = e["name"]
+                e["country"] = pais
+                e["source"] = "Prijzenindex"
+                todo.append(e)
+                nuevas += 1
+            if i % 10 == 0 or nuevas:
+                log(f"  {u} -> {len(filas)} filas, {nuevas} nuevas (total {len(todo)})")
+    viejos = sum(1 for e in todo if e.get("viejo"))
+    log(f"  Prijzenindex: {len(todo)} estaciones con precio ({viejos} marcadas como no actuales)")
+    return todo
+
+
 CADENAS = [
+    {"marca": "Prijzenindex", "pais": "BE/NL", "base": PI_BASE, "fn": prijzenindex},
     {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
     {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
     {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
