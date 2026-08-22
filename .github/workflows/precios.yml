@@ -1,0 +1,36 @@
+name: Precios NL y BE
+
+on:
+  schedule:
+    - cron: "10 5 * * *"     # 07:10 en España (verano)
+    - cron: "10 16 * * *"    # 18:10 en España (verano)
+  workflow_dispatch:          # y a mano, desde la pestaña Actions
+
+permissions:
+  contents: write
+
+jobs:
+  recolectar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ejecutar el recolector
+        run: python collector/collect.py
+        continue-on-error: true   # si una cadena falla, no se tumba el resto
+
+      - name: Guardar el resultado
+        run: |
+          if [ -f precios.json ]; then
+            git config user.name  "github-actions"
+            git config user.email "actions@github.com"
+            git add precios.json
+            git diff --staged --quiet || git commit -m "Precios $(date -u +%Y-%m-%d\ %H:%M) UTC"
+            git push
+          else
+            echo "No se ha generado precios.json"
+          fi
