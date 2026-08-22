@@ -487,7 +487,7 @@ def dats24(c):
 PI_BASE = "https://prijzenindex.nl"
 PI_RAICES = [("BE", "/brandstof/diesel-belgie"), ("NL", "/brandstof/diesel")]
 
-PI_CIUDAD = re.compile(r'href="(/brandstof/diesel(?:-belgie)?/[a-z0-9\-]+)"', re.I)
+PI_CIUDAD = re.compile(r'href="(?:https?://[^"/]+)?(/brandstof/diesel(?:-belgie)?/[a-z0-9\\-]+)/?"', re.I)
 PI_COORD = re.compile(r'destination=(-?\d+\.\d+),(-?\d+\.\d+)')
 PI_PRECIO = re.compile(r'&euro;|\u20ac|€')
 PI_NUM = re.compile(r'(\d[.,]\d{2,3})')
@@ -548,6 +548,30 @@ def prijzenindex(c):
         log(f"  indice {pais} {raiz} -> {diag}")
         if html is None:
             continue
+        # El indice del pais ya lista estaciones: se extraen tambien de ahi
+        n_idx = 0
+        for f in re.split(r'<tr[\s>]', html)[1:]:
+            c = PI_COORD.search(f)
+            if not c:
+                continue
+            lat, lon = a_coord(c.group(1)), a_coord(c.group(2))
+            m2 = PI_PRECIO.search(f)
+            n2 = PI_NUM.search(f, m2.end() if m2 else 0)
+            precio = a_float(n2.group(1)) if n2 else None
+            if lat is None or lon is None or not precio:
+                continue
+            k = (round(lat, 4), round(lon, 4))
+            if k in vistas:
+                continue
+            vistas.add(k)
+            mm2 = PI_MARCA.search(f)
+            marca = _html.unescape(mm2.group(1)).strip() if mm2 else "Gasolinera"
+            todo.append({"lat": lat, "lon": lon, "price": precio, "name": marca,
+                         "city": "", "viejo": bool(PI_VIEJO.search(f)),
+                         "brand": marca, "country": pais, "source": "Prijzenindex"})
+            n_idx += 1
+        log(f"  del propio indice {pais}: {n_idx} estaciones, total {len(todo)}")
+
         ciudades = []
         for m in PI_CIUDAD.finditer(html):
             u = m.group(1)
