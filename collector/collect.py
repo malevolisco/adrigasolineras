@@ -24,7 +24,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-AGENTE = "RutaDieselBot/1.0 (proyecto no comercial)"
+# ---------------------------------------------------------------------------
+# RESPETAR_ROBOTS = True  -> se salta las cadenas que lo prohiben (recomendado)
+# RESPETAR_ROBOTS = False -> se consultan igual
+#
+# Ignorar robots.txt no es delito, pero puede incumplir las condiciones de uso
+# del sitio y, en la UE, rozar el derecho sui generis sobre bases de datos si
+# la extraccion es masiva. El riesgo cotidiano es que bloqueen la IP.
+# Dos pasadas al dia y agente identificado mantienen la carga en lo minimo.
+# Si una web responde 403, es un no activo: no se insiste.
+# ---------------------------------------------------------------------------
+RESPETAR_ROBOTS = False
+
+AGENTE = "RutaDieselBot/1.0 (proyecto personal no comercial)"
 ESPERA = 1.5
 SALIDA = "precios.json"
 LOG = []
@@ -51,7 +63,11 @@ def permitido(url):
             rp = None
         _robots[base] = rp
     rp = _robots[base]
-    return True if rp is None else rp.can_fetch(AGENTE, url)
+    ok = True if rp is None else rp.can_fetch(AGENTE, url)
+    if not ok and not RESPETAR_ROBOTS:
+        log(f"  [aviso] robots.txt de {p.netloc} lo desaconseja; se continua por configuracion")
+        return True
+    return ok
 
 
 def traer(url, timeout=25):
@@ -151,6 +167,46 @@ def a_coord(v):
     return f if -180 <= f <= 180 and f != 0 else None
 
 
+PRECIO_HTML = re.compile(
+    r'(?is)(?:diesel|gazole|\bb7\b).{0,150}?([12][.,]\d{2,3})')
+COORD_HTML = re.compile(
+    r'(?is)lat(?:itude)?["\':=\s]{1,6}(-?\d{1,2}\.\d{3,})'
+    r'.{0,200}?l(?:ng|on|ongitude)["\':=\s]{1,6}(-?\d{1,3}\.\d{3,})')
+NOMBRE_HTML = re.compile(r'(?is)(?:name|naam|title)["\':=\s]{1,6}["\']([^"\'<>]{3,40})')
+
+
+def del_html(html, marca):
+    """
+    Ultimo recurso cuando no hay JSON: se localiza cada par de coordenadas y
+    se busca un precio de diesel en su vecindad. Emparejar por ventana evita
+    el error de casar el precio de una estacion con la posicion de otra.
+    """
+    fuera = []
+    for m in COORD_HTML.finditer(html):
+        la, lo = a_coord(m.group(1)), a_coord(m.group(2))
+        if la is None or lo is None:
+            continue
+        # Primero hacia delante: en una ficha, el precio suele ir tras la posicion.
+        adelante = html[m.end():m.end() + 1200]
+        pm = PRECIO_HTML.search(adelante)
+        ventana = adelante
+        if not pm:
+            # Si no, hacia atras, y se toma el mas cercano, no el primero.
+            atras = html[max(0, m.start() - 600):m.start()]
+            todos = list(PRECIO_HTML.finditer(atras))
+            if not todos:
+                continue
+            pm = todos[-1]
+            ventana = atras
+        precio = a_float(pm.group(1))
+        if not precio:
+            continue
+        nm = NOMBRE_HTML.search(ventana)
+        fuera.append({"lat": la, "lon": lo, "price": precio,
+                      "name": (nm.group(1) if nm else marca), "city": ""})
+    return fuera
+
+
 PALABRAS = ("tankstation", "stations", "station", "vestiging", "prijzen",
             "prijs", "locaties", "verkooppunt", "pompen")
 
@@ -192,7 +248,10 @@ def procesar(c):
     if portada is None:
         return []
 
-    urls = [base] + candidatas(portada, base)
+    fijas = [base + r for r in ("/tankstations", "/nl/tankstations", "/stations",
+                                "/nl/stations", "/api/stations", "/api/tankstations",
+                                "/prijzen", "/nl/prijzen")]
+    urls = [base] + candidatas(portada, base) + fijas
     log(f"  candidatas: {', '.join(u.replace(base,'') or '/' for u in urls)}")
 
     mejor = []
@@ -205,7 +264,12 @@ def procesar(c):
         halladas = []
         for b in bloques:
             rastrea(b, halladas)
-        log(f"  {u} -> {diag}, {len(bloques)} bloques JSON, {len(halladas)} estaciones")
+        if not halladas:
+            halladas = del_html(html, marca)
+            via = "html"
+        else:
+            via = "json"
+        log(f"  {u} -> {diag}, {len(bloques)} bloques JSON, {len(halladas)} estaciones ({via})")
         if len(halladas) > len(mejor):
             mejor = halladas
             if len(mejor) > 30:
