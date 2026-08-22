@@ -131,27 +131,67 @@ def bloques_json(html):
     return out
 
 
-def rastrea(obj, salida):
-    """Busca objetos con latitud, longitud y algun precio de diesel."""
+DIESEL_TXT = re.compile(r'(?i)\b(diesel|gazole|gasoil|b7)\b')
+
+
+def precio_diesel(obj, prof=0):
+    """
+    Busca el precio de diesel en cualquier sitio del subarbol.
+    Cubre los dos formatos habituales:
+      a) plano:   {"diesel": 2.292}
+      b) anidado: {"fuelPrices":[{"fuelProductType":"DIESEL","price":2.292}]}
+    """
+    if prof > 6:
+        return None
     if isinstance(obj, dict):
-        lat = lon = precio = None
+        # (a) una clave que menciona diesel y lleva el numero
+        for k, v in obj.items():
+            if DIESEL_TXT.search(str(k)) and not isinstance(v, (dict, list)):
+                p = a_float(v)
+                if p:
+                    return p
+        # (b) un objeto que se identifica como diesel y guarda el precio aparte
+        marcado = any(DIESEL_TXT.search(str(v)) for v in obj.values()
+                      if not isinstance(v, (dict, list)))
+        if marcado:
+            for k, v in obj.items():
+                if re.search(r'(?i)pric|prijs|prix|amount|value|tarief', str(k)):
+                    p = a_float(v)
+                    if p:
+                        return p
+        for v in obj.values():
+            p = precio_diesel(v, prof + 1)
+            if p:
+                return p
+    elif isinstance(obj, list):
+        for v in obj:
+            p = precio_diesel(v, prof + 1)
+            if p:
+                return p
+    return None
+
+
+def rastrea(obj, salida):
+    """Objetos con latitud y longitud; el precio puede estar mas abajo."""
+    if isinstance(obj, dict):
+        lat = lon = None
         for k, v in obj.items():
             kl = str(k).lower()
             if lat is None and kl in ("lat", "latitude", "breedtegraad"):
                 lat = a_coord(v)
             if lon is None and kl in ("lng", "lon", "long", "longitude", "lengtegraad"):
                 lon = a_coord(v)
-            if precio is None and not isinstance(v, (dict, list)):
-                if ("diesel" in kl or "gazole" in kl or "b7" in kl) and "prijs" not in kl:
-                    precio = a_float(v)
-                elif "diesel" in kl and "prijs" in kl:
-                    precio = a_float(v)
-        if lat is not None and lon is not None and precio:
-            salida.append({
-                "lat": lat, "lon": lon, "price": precio,
-                "name": obj.get("name") or obj.get("title") or obj.get("naam") or "",
-                "city": obj.get("city") or obj.get("plaats") or obj.get("gemeente") or "",
-            })
+        if lat is not None and lon is not None:
+            precio = precio_diesel(obj)
+            if precio:
+                salida.append({
+                    "lat": lat, "lon": lon, "price": precio,
+                    "name": obj.get("name") or obj.get("title") or obj.get("naam")
+                            or obj.get("displayName") or "",
+                    "city": obj.get("city") or obj.get("plaats") or obj.get("gemeente")
+                            or obj.get("municipality") or "",
+                })
+                return          # ya resuelto: no se baja mas por esta rama
         for v in obj.values():
             rastrea(v, salida)
     elif isinstance(obj, list):
@@ -228,20 +268,173 @@ def candidatas(portada_html, base):
 
 # ------------------------------------------------------------- cadenas
 
+# ---------------------------------------------------------------------------
+# Extractor para TinQ (Drupal). Estructura confirmada en el codigo fuente:
+#   <div class="... taxonomy-term-Diesel B7 ...">  ... <p>Diesel B7</p> ...
+#   <div content="2.359" class="field field--name-field-prices-price-pump ...">
+# El precio esta en el atributo content, no en el texto visible, que va
+# partido en <sup> y no se puede leer de corrido.
+# ---------------------------------------------------------------------------
+FICHA = re.compile(r'href="(/tankstations/[a-z0-9\-]+)"', re.I)
+BLOQUE_DIESEL = re.compile(r'taxonomy-term-Diesel[\s_-]*B7(.{0,4000}?)field--name-field-prices-price-pump', re.S | re.I)
+PRECIO_ATTR = re.compile(r'content="(\d[.,]\d{2,3})"[^>]*field--name-field-prices-price-pump', re.I)
+DIRECCION = re.compile(r'address-line1">([^<]+)<.*?postal-code">([^<]+)<.*?locality">([^<]+)<', re.S | re.I)
+GMAPS = re.compile(r'[?&]q=(-?\d{1,2}\.\d{4,}),(-?\d{1,3}\.\d{4,})|@(-?\d{1,2}\.\d{4,}),(-?\d{1,3}\.\d{4,})')
+
+
+def ficha_drupal(html, marca, pais, url):
+    """Saca precio de diesel, direccion y coordenadas de una ficha de estacion."""
+    pm = PRECIO_ATTR.search(html)
+    precio = a_float(pm.group(1)) if pm else None
+    if not precio:
+        return None
+
+    lat = lon = None
+    gm = GMAPS.search(html)
+    if gm:
+        lat = a_coord(gm.group(1) or gm.group(3))
+        lon = a_coord(gm.group(2) or gm.group(4))
+    if lat is None:
+        cm = COORD_HTML.search(html)
+        if cm:
+            lat, lon = a_coord(cm.group(1)), a_coord(cm.group(2))
+    if lat is None or lon is None:
+        return None
+
+    dm = DIRECCION.search(html)
+    sub = f"{dm.group(1).strip()}, {dm.group(2).strip()} {dm.group(3).strip()}" if dm else ""
+    nombre = url.rstrip("/").split("/")[-1].replace("-", " ").title()
+    return {"lat": lat, "lon": lon, "price": precio,
+            "name": f"{marca} {nombre}", "city": sub}
+
+
+def por_fichas(base, listado, marca, pais, tope=500):
+    """Listado -> enlaces de ficha -> precio en cada ficha."""
+    html, diag = traer(listado)
+    log(f"  listado {listado} -> {diag}")
+    if html is None:
+        return []
+    enlaces = []
+    for m in FICHA.finditer(html):
+        u = urljoin(base, m.group(1))
+        if u not in enlaces:
+            enlaces.append(u)
+    log(f"  fichas encontradas: {len(enlaces)}")
+    if not enlaces:
+        return []
+
+    fuera, fallos = [], 0
+    for i, u in enumerate(enlaces[:tope]):
+        h, d = traer(u)
+        if h is None:
+            fallos += 1
+            if fallos > 8:
+                log(f"  demasiados fallos seguidos, se detiene en {i}")
+                break
+            continue
+        e = ficha_drupal(h, marca, pais, u)
+        if e:
+            fuera.append(e)
+        if i and i % 50 == 0:
+            log(f"  ... {i} fichas revisadas, {len(fuera)} con precio")
+    log(f"  total con precio: {len(fuera)} de {min(len(enlaces), tope)} fichas")
+    return fuera
+
+
+# ---------------------------------------------------------------------------
+# DATS 24 (Belgica). Endpoint publico confirmado en el panel de red:
+#   POST https://dats24.be/api/service_point_locator
+#   {"fuelProductType":[],"latitude":..,"longitude":..,
+#    "searchRadius":28512,"serviceDeliveryPointType":["FUEL"]}
+# Se barre el pais con una rejilla de puntos separados unos 40 km.
+# ---------------------------------------------------------------------------
+def postjson(url, cuerpo, timeout=25):
+    datos = json.dumps(cuerpo).encode("utf-8")
+    req = Request(url, data=datos, headers={
+        "User-Agent": AGENTE,
+        "Content-Type": "text/plain;charset=UTF-8",
+        "Accept": "application/json",
+        "Origin": "https://dats24.be",
+    })
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            crudo = r.read()
+        time.sleep(ESPERA)
+        return json.loads(crudo.decode("utf-8", "replace")), f"HTTP 200, {len(crudo)//1024} KB"
+    except HTTPError as e:
+        return None, f"HTTP {e.code}"
+    except URLError as e:
+        return None, f"sin conexion ({e.reason})"
+    except Exception as e:
+        return None, type(e).__name__
+
+
+def dats24(c):
+    url = "https://dats24.be/api/service_point_locator"
+    # Rejilla sobre Belgica: lat 49.5-51.5, lon 2.6-6.4
+    puntos = []
+    la = 49.55
+    while la <= 51.55:
+        lo = 2.65
+        while lo <= 6.45:
+            puntos.append((round(la, 4), round(lo, 4)))
+            lo += 0.50
+        la += 0.35
+    log(f"  rejilla de {len(puntos)} puntos, radio 28,5 km")
+
+    fuera, muestra_hecha, vacios = [], False, 0
+    for i, (la, lo) in enumerate(puntos):
+        j, diag = postjson(url, {"fuelProductType": [], "latitude": la, "longitude": lo,
+                                 "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]})
+        if j is None:
+            log(f"  punto {la},{lo} -> {diag}")
+            vacios += 1
+            if vacios > 5:
+                log("  demasiados fallos seguidos, se detiene")
+                break
+            continue
+        if not muestra_hecha:
+            # Una sola vez: se deja constancia de como viene la respuesta
+            log(f"  estructura de la respuesta: {str(j)[:600]}")
+            muestra_hecha = True
+        halladas = []
+        rastrea(j, halladas)
+        fuera.extend(halladas)
+        if i % 10 == 0:
+            log(f"  ... {i+1}/{len(puntos)} puntos, {len(fuera)} lecturas")
+    log(f"  DATS 24: {len(fuera)} lecturas con precio antes de deduplicar")
+    return fuera
+
+
 CADENAS = [
     {"marca": "Tango",   "pais": "NL", "base": "https://www.tango.nl"},
-    {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl"},
+    {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl",
+     "fn": lambda c: por_fichas(c["base"], c["base"] + "/tankstations", c["marca"], c["pais"])},
     {"marca": "Gulf",    "pais": "NL", "base": "https://www.gulf.nl"},
     {"marca": "Kreuze",  "pais": "NL", "base": "https://www.kreuze.nl"},
-    {"marca": "DATS 24", "pais": "BE", "base": "https://www.dats24.be"},
-    {"marca": "Lukoil",  "pais": "BE", "base": "https://lukoil.be"},
-    {"marca": "Maes",    "pais": "BE", "base": "https://www.maesoil.be"},
+    {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
+    {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
+    {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
+    {"marca": "Octa+",     "pais": "BE", "base": "https://www.octaplus.be"},
+    {"marca": "Firezone",  "pais": "NL", "base": "https://www.firezone.nl"},
+    {"marca": "Fieten",    "pais": "NL", "base": "https://www.fietenolie.nl"},
+    {"marca": "SuperTank", "pais": "NL", "base": "https://www.supertank.nl"},
+    {"marca": "Berkman",   "pais": "NL", "base": "https://www.berkman.nl"},
+    {"marca": "OK",        "pais": "NL", "base": "https://www.ok.nl"},
 ]
 
 
 def procesar(c):
     marca, pais, base = c["marca"], c["pais"], c["base"]
     log(f"\n--- {marca} ({pais}) ---")
+
+    if c.get("fn"):
+        r = c["fn"](c)
+        for e in r:
+            e["brand"] = marca
+            e["country"] = pais
+            e["source"] = marca
+        return r
 
     portada, diag = traer(base)
     log(f"  portada {base} -> {diag}")
@@ -281,8 +474,55 @@ def procesar(c):
     return mejor
 
 
+# ---------------------------------------------------------------------------
+# Descubrimiento de cadenas: se pregunta a OpenStreetMap que marcas existen en
+# NL y BE, cuantas estaciones tiene cada una y cual es su web oficial. Asi la
+# lista de objetivos sale de un dato, no de suposiciones.
+# ---------------------------------------------------------------------------
+def descubrir_marcas():
+    consulta = """[out:json][timeout:90];
+    area["ISO3166-1"~"^(NL|BE)$"][admin_level=2]->.p;
+    nwr["amenity"="fuel"](area.p);
+    out tags center;"""
+    try:
+        req = Request("https://overpass-api.de/api/interpreter",
+                      data=("data=" + consulta).encode("utf-8"),
+                      headers={"User-Agent": AGENTE,
+                               "Content-Type": "application/x-www-form-urlencoded"})
+        with urlopen(req, timeout=180) as r:
+            j = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        log(f"  no se ha podido consultar OpenStreetMap: {type(e).__name__}")
+        return
+
+    cuenta, webs, paises = {}, {}, {}
+    for el in j.get("elements", []):
+        t = el.get("tags", {})
+        marca = (t.get("brand") or t.get("operator") or "").strip()
+        if not marca:
+            continue
+        cuenta[marca] = cuenta.get(marca, 0) + 1
+        w = t.get("brand:website") or t.get("website") or t.get("contact:website")
+        if w and marca not in webs:
+            webs[marca] = w.split("?")[0]
+        lat = el.get("lat") or (el.get("center") or {}).get("lat")
+        if lat:
+            paises.setdefault(marca, set()).add("NL" if lat > 51.45 else "BE")
+
+    log("\n  === CADENAS REALES EN NL Y BE, POR TAMANO ===")
+    log("  %-26s %6s  %-6s %s" % ("MARCA", "ESTAC.", "PAIS", "WEB OFICIAL"))
+    for marca, n in sorted(cuenta.items(), key=lambda x: -x[1])[:30]:
+        if n < 8:
+            continue
+        log("  %-26s %6d  %-6s %s" % (marca[:26], n,
+                                      "/".join(sorted(paises.get(marca, {"?"}))),
+                                      webs.get(marca, "(sin web en OSM)")))
+    log("  ============================================\n")
+
+
 def main():
     hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    descubrir_marcas()
     todas = []
     for c in CADENAS:
         try:
