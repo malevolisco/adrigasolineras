@@ -372,44 +372,58 @@ def postjson(url, cuerpo, timeout=25):
 
 
 def dats24(c):
-    url = "https://dats24.be/api/service_point_locator"
+    LOCATOR = "https://dats24.be/api/service_point_locator"
+    DETAILS = "https://dats24.be/api/service_point_details"
 
-    # ---- Sondeo: se prueban variantes del cuerpo en Rebecq, donde consta
-    #      que hay estacion con diesel a 2,292. La que devuelva datos, gana.
-    REBECQ = (50.6570, 4.1651)
-    variantes = [
-        ("tal cual se capturo",
-         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
-          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
-        ("con diesel explicito",
-         {"fuelProductType": ["DIESEL"], "latitude": REBECQ[0], "longitude": REBECQ[1],
-          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
-        ("sin filtro de tipo",
-         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
-          "searchRadius": 28512, "serviceDeliveryPointType": []}),
-        ("radio pequeno",
-         {"fuelProductType": [], "latitude": REBECQ[0], "longitude": REBECQ[1],
-          "searchRadius": 5000, "serviceDeliveryPointType": ["FUEL"]}),
-        ("coordenadas como texto",
-         {"fuelProductType": [], "latitude": str(REBECQ[0]), "longitude": str(REBECQ[1]),
-          "searchRadius": 28512, "serviceDeliveryPointType": ["FUEL"]}),
-    ]
+    # ---- 1. Localizador: confirmado que devuelve estaciones con coordenadas
+    def buscar(la, lo, radio=28512):
+        return postjson(LOCATOR, {"fuelProductType": [], "latitude": la, "longitude": lo,
+                                  "searchRadius": radio, "serviceDeliveryPointType": ["FUEL"]})
 
-    plantilla = None
-    for nombre, cuerpo in variantes:
-        j, diag = postjson(url, cuerpo)
-        n = len(j) if isinstance(j, list) else (len(str(j)) if j else 0)
-        log(f"  sondeo [{nombre}] -> {diag}, contenido: {str(j)[:220]}")
-        if j and n:
-            plantilla = cuerpo
-            log(f"  -> funciona la variante: {nombre}")
-            break
-
-    if plantilla is None:
-        log("  ninguna variante devuelve datos. La API pide algo mas (sesion o cabecera).")
+    j, diag = buscar(50.6570, 4.1651)
+    if not j:
+        log(f"  el localizador no responde ({diag}); se abandona")
         return []
+    log(f"  localizador -> {diag}, {len(j) if isinstance(j, list) else '?'} estaciones")
+    log(f"  ficha completa de ejemplo: {str(j[0])[:1200]}")
 
-    # ---- Barrido con la variante que funciona
+    # ¿Trae ya el precio el propio localizador?
+    prueba = []
+    rastrea(j, prueba)
+    if prueba:
+        log(f"  el localizador YA trae precios ({len(prueba)} en este punto)")
+        modo = "locator"
+    else:
+        # ---- 2. Si no, se sondea el endpoint de detalle con el primer id
+        ident = j[0].get("id") if isinstance(j[0], dict) else None
+        log(f"  sin precios en el localizador; se sondea el detalle con id={ident}")
+        variantes = [
+            ("servicePointId", {"servicePointId": ident}),
+            ("id", {"id": ident}),
+            ("servicePointId numerico", {"servicePointId": int(ident)} if str(ident).isdigit() else None),
+            ("con tipo", {"servicePointId": ident, "serviceDeliveryPointType": "FUEL"}),
+            ("lista de ids", {"servicePointIds": [ident]}),
+        ]
+        modo = None
+        for nombre, cuerpo in variantes:
+            if cuerpo is None:
+                continue
+            d, dg = postjson(DETAILS, cuerpo)
+            log(f"  detalle [{nombre}] -> {dg}, {str(d)[:400]}")
+            if d:
+                pr = []
+                rastrea(d, pr)
+                if not pr and precio_diesel(d):
+                    pr = [{"ok": True}]
+                if pr:
+                    modo = cuerpo
+                    log(f"  -> el detalle funciona con: {nombre}")
+                    break
+        if modo is None:
+            log("  el detalle no suelta precios con ninguna variante probada")
+            return []
+
+    # ---- 3. Barrido del pais
     puntos, la = [], 49.55
     while la <= 51.55:
         lo = 2.65
@@ -417,26 +431,49 @@ def dats24(c):
             puntos.append((round(la, 4), round(lo, 4)))
             lo += 0.50
         la += 0.35
-    log(f"  rejilla de {len(puntos)} puntos, radio {plantilla['searchRadius']} m")
 
-    fuera, vacios = [], 0
+    estaciones, vistas = [], set()
     for i, (la, lo) in enumerate(puntos):
-        cuerpo = dict(plantilla)
-        cuerpo["latitude"] = la if not isinstance(plantilla["latitude"], str) else str(la)
-        cuerpo["longitude"] = lo if not isinstance(plantilla["longitude"], str) else str(lo)
-        j, diag = postjson(url, cuerpo)
-        if j is None:
-            vacios += 1
-            if vacios > 5:
-                log("  demasiados fallos seguidos, se detiene")
-                break
+        j, _ = buscar(la, lo)
+        if not isinstance(j, list):
             continue
-        halladas = []
-        rastrea(j, halladas)
-        fuera.extend(halladas)
-        if i % 8 == 0:
-            log(f"  ... {i+1}/{len(puntos)} puntos, {len(fuera)} lecturas")
-    log(f"  DATS 24: {len(fuera)} lecturas con precio antes de deduplicar")
+        for e in j:
+            if not isinstance(e, dict):
+                continue
+            k = e.get("id") or (e.get("latitude"), e.get("longitude"))
+            if k in vistas:
+                continue
+            vistas.add(k)
+            estaciones.append(e)
+        if i % 12 == 0:
+            log(f"  ... {i+1}/{len(puntos)} puntos, {len(estaciones)} estaciones distintas")
+    log(f"  estaciones localizadas: {len(estaciones)}")
+
+    # ---- 4. Precios
+    fuera = []
+    if modo == "locator":
+        rastrea(estaciones, fuera)
+    else:
+        clave = [k for k in modo if "ervicePoint" in k or k == "id"][0]
+        for i, e in enumerate(estaciones):
+            cuerpo = dict(modo)
+            ident = e.get("id")
+            cuerpo[clave] = [ident] if isinstance(modo[clave], list) else (
+                int(ident) if isinstance(modo[clave], int) and str(ident).isdigit() else ident)
+            d, _ = postjson(DETAILS, cuerpo)
+            if not d:
+                continue
+            precio = precio_diesel(d)
+            if not precio:
+                continue
+            fuera.append({
+                "lat": e.get("latitude"), "lon": e.get("longitude"), "price": precio,
+                "name": "DATS 24 " + str(e.get("addressCity") or ""),
+                "city": f"{e.get('addressStreet','')} {e.get('addressNumber','')}".strip(),
+            })
+            if i % 25 == 0:
+                log(f"  ... {i+1}/{len(estaciones)} fichas, {len(fuera)} con precio")
+    log(f"  DATS 24: {len(fuera)} con precio de diesel")
     return fuera
 
 
