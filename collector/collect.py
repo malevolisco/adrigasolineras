@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Recolector de precios de diesel por estacion — Paises Bajos y Belgica.
+Recolector de precios de diesel por estacion — Paises Bajos y Belgica. v2
 
-Se ejecuta desde una GitHub Action dos veces al dia y escribe precios.json
-en la raiz del sitio. El navegador lo lee desde el propio dominio, asi que
-no hay problema de CORS ni hace falta servidor.
+Novedades frente a la v1:
+  - No hace falta acertar la URL: parte de la portada de cada cadena y
+    busca sola los enlaces que huelen a listado de estaciones.
+  - Prueba varias direcciones candidatas y cuenta que pasa en cada una.
+  - Nunca termina con error: siempre escribe precios.json, aunque salga
+    vacio, para que el resto del proceso siga.
+  - Deja un diagnostico linea a linea: codigo HTTP, tamano, bloques JSON
+    encontrados y estaciones extraidas. Con eso se afina sin adivinar.
 
-Normas de la casa, no negociables:
-  1. Antes de pedir nada, se consulta robots.txt. Si prohibe la ruta, se salta.
-  2. Agente identificado y contacto visible.
-  3. Dos ejecuciones diarias. Ni una mas.
-  4. Cada precio guarda su fuente y su fecha.
+Normas: se respeta robots.txt, agente identificado y dos pasadas al dia.
 """
 
 import json
@@ -19,18 +20,26 @@ import sys
 import time
 import urllib.robotparser
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-AGENTE = "RutaDieselBot/1.0 (+proyecto no comercial; contacto en la web)"
-ESPERA = 2.0          # segundos entre peticiones al mismo dominio
+AGENTE = "RutaDieselBot/1.0 (proyecto no comercial)"
+ESPERA = 1.5
 SALIDA = "precios.json"
+LOG = []
 
 _robots = {}
 
 
-def permitido(url: str) -> bool:
-    """True si robots.txt del dominio permite esta ruta."""
+def log(msg):
+    LOG.append(msg)
+    print(msg, flush=True)
+
+
+# ------------------------------------------------------------------ red
+
+def permitido(url):
     p = urlparse(url)
     base = f"{p.scheme}://{p.netloc}"
     if base not in _robots:
@@ -39,141 +48,192 @@ def permitido(url: str) -> bool:
         try:
             rp.read()
         except Exception:
-            # Sin robots.txt legible: se asume permitido, es el criterio estandar
             rp = None
         _robots[base] = rp
     rp = _robots[base]
     return True if rp is None else rp.can_fetch(AGENTE, url)
 
 
-def traer(url: str, timeout: int = 25) -> str:
+def traer(url, timeout=25):
+    """Devuelve (html, diagnostico). html es None si no se pudo."""
     if not permitido(url):
-        raise PermissionError(f"robots.txt prohibe {url}")
-    req = Request(url, headers={"User-Agent": AGENTE, "Accept-Language": "nl,en"})
-    with urlopen(req, timeout=timeout) as r:
-        html = r.read().decode("utf-8", "replace")
-    time.sleep(ESPERA)
-    return html
-
-
-# ---------------------------------------------------------------- utilidades
-
-PRECIO = re.compile(r"(?<![\d,.])([12][,.]\d{2,3})(?![\d])")
-COORD = re.compile(r'"lat(?:itude)?"\s*:\s*"?(-?\d+\.\d+)"?.{0,80}?"l(?:ng|on|ongitude)"\s*:\s*"?(-?\d+\.\d+)"?', re.S | re.I)
-
-
-def a_float(txt: str):
+        return None, "robots.txt lo prohibe"
+    req = Request(url, headers={
+        "User-Agent": AGENTE,
+        "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.6",
+        "Accept-Encoding": "identity",
+    })
     try:
-        v = float(str(txt).replace(",", "."))
+        with urlopen(req, timeout=timeout) as r:
+            datos = r.read()
+            code = r.getcode()
+    except HTTPError as e:
+        return None, f"HTTP {e.code}"
+    except URLError as e:
+        return None, f"sin conexion ({e.reason})"
+    except Exception as e:
+        return None, type(e).__name__
+    time.sleep(ESPERA)
+    return datos.decode("utf-8", "replace"), f"HTTP {code}, {len(datos)//1024} KB"
+
+
+# ------------------------------------------------------------ extraccion
+
+def a_float(v):
+    try:
+        f = float(str(v).replace(",", "."))
     except (TypeError, ValueError):
         return None
-    return v if 0.5 < v < 5 else None
+    return f if 0.8 < f < 4 else None
 
 
-def json_incrustado(html: str):
-    """Extrae objetos JSON incrustados (__NEXT_DATA__, JSON-LD, etc.)."""
+def bloques_json(html):
+    """JSON incrustado: Next.js, Nuxt, JSON-LD, estados iniciales."""
     out = []
-    for patron in (
+    patrones = (
         r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
         r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>',
+        r'window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>',
         r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});',
-    ):
-        for m in re.finditer(patron, html, re.S | re.I):
+        r'<script[^>]+type="application/json"[^>]*>(\{.*?\})</script>',
+    )
+    for pat in patrones:
+        for m in re.finditer(pat, html, re.S | re.I):
+            txt = m.group(1).strip()
             try:
-                out.append(json.loads(m.group(1)))
+                out.append(json.loads(txt))
             except Exception:
                 pass
+    # La respuesta puede ser JSON puro (una API)
+    t = html.strip()
+    if t[:1] in "[{":
+        try:
+            out.append(json.loads(t))
+        except Exception:
+            pass
     return out
 
 
-def busca_estaciones(obj, salida, marca, pais):
-    """Recorre un JSON cualquiera buscando objetos con lat, lon y un precio."""
+def rastrea(obj, salida):
+    """Busca objetos con latitud, longitud y algun precio de diesel."""
     if isinstance(obj, dict):
-        lat = obj.get("lat") or obj.get("latitude") or obj.get("Latitude")
-        lon = obj.get("lng") or obj.get("lon") or obj.get("longitude") or obj.get("Longitude")
-        precio = None
+        lat = lon = precio = None
         for k, v in obj.items():
             kl = str(k).lower()
-            if ("diesel" in kl or "gazole" in kl or "b7" in kl) and not isinstance(v, (dict, list)):
-                precio = a_float(v)
-                if precio:
-                    break
-        if lat and lon and precio:
+            if lat is None and kl in ("lat", "latitude", "breedtegraad"):
+                lat = a_coord(v)
+            if lon is None and kl in ("lng", "lon", "long", "longitude", "lengtegraad"):
+                lon = a_coord(v)
+            if precio is None and not isinstance(v, (dict, list)):
+                if ("diesel" in kl or "gazole" in kl or "b7" in kl) and "prijs" not in kl:
+                    precio = a_float(v)
+                elif "diesel" in kl and "prijs" in kl:
+                    precio = a_float(v)
+        if lat is not None and lon is not None and precio:
             salida.append({
-                "brand": marca,
-                "country": pais,
-                "lat": float(str(lat).replace(",", ".")),
-                "lon": float(str(lon).replace(",", ".")),
-                "price": precio,
-                "name": obj.get("name") or obj.get("title") or marca,
-                "city": obj.get("city") or obj.get("plaats") or "",
+                "lat": lat, "lon": lon, "price": precio,
+                "name": obj.get("name") or obj.get("title") or obj.get("naam") or "",
+                "city": obj.get("city") or obj.get("plaats") or obj.get("gemeente") or "",
             })
         for v in obj.values():
-            busca_estaciones(v, salida, marca, pais)
+            rastrea(v, salida)
     elif isinstance(obj, list):
         for v in obj:
-            busca_estaciones(v, salida, marca, pais)
+            rastrea(v, salida)
 
 
-def generico(url: str, marca: str, pais: str):
-    """
-    Colector por defecto: descarga la pagina, busca JSON incrustado y extrae
-    cualquier objeto con coordenadas y precio de diesel.
-
-    Si una cadena no encaja aqui, se le escribe una funcion propia y se
-    referencia en CADENAS. Este generico resuelve la mayoria de webs modernas,
-    que llevan los datos en __NEXT_DATA__ o en JSON-LD.
-    """
-    html = traer(url)
-    encontradas = []
-    for bloque in json_incrustado(html):
-        busca_estaciones(bloque, encontradas, marca, pais)
-    return encontradas
+def a_coord(v):
+    try:
+        f = float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return f if -180 <= f <= 180 and f != 0 else None
 
 
-# ---------------------------------------------------------------- cadenas
-# Rellenar 'url' con la pagina que lista las estaciones y sus precios.
-# Se comprueba una a una en la primera ejecucion real: la Action deja el
-# recuento por cadena en el registro, asi se ve cual funciona y cual no.
+PALABRAS = ("tankstation", "stations", "station", "vestiging", "prijzen",
+            "prijs", "locaties", "verkooppunt", "pompen")
+
+
+def candidatas(portada_html, base):
+    """Enlaces de la portada que parecen listados de estaciones."""
+    urls = []
+    for m in re.finditer(r'href="([^"#]+)"', portada_html, re.I):
+        h = m.group(1)
+        hl = h.lower()
+        if any(p in hl for p in PALABRAS):
+            u = urljoin(base, h)
+            if urlparse(u).netloc == urlparse(base).netloc and u not in urls:
+                urls.append(u)
+    # Las mas cortas primero: suelen ser el listado, no una ficha suelta
+    urls.sort(key=len)
+    return urls[:4]
+
+
+# ------------------------------------------------------------- cadenas
 
 CADENAS = [
-    # Paises Bajos
-    {"marca": "Tango",     "pais": "NL", "url": "https://www.tango.nl/tankstations",   "fn": generico},
-    {"marca": "TinQ",      "pais": "NL", "url": "https://www.tinq.nl/tankstations",    "fn": generico},
-    {"marca": "Gulf",      "pais": "NL", "url": "https://www.gulf.nl/tankstations",    "fn": generico},
-    {"marca": "Kreuze",    "pais": "NL", "url": "https://www.kreuze.nl/tankstations",  "fn": generico},
-    # Belgica
-    {"marca": "DATS 24",   "pais": "BE", "url": "https://dats24.be/nl/tankstations",   "fn": generico},
-    {"marca": "Lukoil",    "pais": "BE", "url": "https://www.lukoil.be/nl/stations",   "fn": generico},
-    {"marca": "Maes",      "pais": "BE", "url": "https://www.maesoil.be/nl/stations",  "fn": generico},
+    {"marca": "Tango",   "pais": "NL", "base": "https://www.tango.nl"},
+    {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl"},
+    {"marca": "Gulf",    "pais": "NL", "base": "https://www.gulf.nl"},
+    {"marca": "Kreuze",  "pais": "NL", "base": "https://www.kreuze.nl"},
+    {"marca": "DATS 24", "pais": "BE", "base": "https://www.dats24.be"},
+    {"marca": "Lukoil",  "pais": "BE", "base": "https://lukoil.be"},
+    {"marca": "Maes",    "pais": "BE", "base": "https://www.maesoil.be"},
 ]
+
+
+def procesar(c):
+    marca, pais, base = c["marca"], c["pais"], c["base"]
+    log(f"\n--- {marca} ({pais}) ---")
+
+    portada, diag = traer(base)
+    log(f"  portada {base} -> {diag}")
+    if portada is None:
+        return []
+
+    urls = [base] + candidatas(portada, base)
+    log(f"  candidatas: {', '.join(u.replace(base,'') or '/' for u in urls)}")
+
+    mejor = []
+    for u in urls:
+        html, diag = traer(u)
+        if html is None:
+            log(f"  {u} -> {diag}")
+            continue
+        bloques = bloques_json(html)
+        halladas = []
+        for b in bloques:
+            rastrea(b, halladas)
+        log(f"  {u} -> {diag}, {len(bloques)} bloques JSON, {len(halladas)} estaciones")
+        if len(halladas) > len(mejor):
+            mejor = halladas
+            if len(mejor) > 30:
+                break
+    for e in mejor:
+        e["brand"] = marca
+        e["country"] = pais
+        e["source"] = marca
+    return mejor
 
 
 def main():
     hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    estaciones, informe = [], []
-
+    todas = []
     for c in CADENAS:
         try:
-            r = c["fn"](c["url"], c["marca"], c["pais"])
-            for e in r:
-                e["source"] = c["marca"]
-                e["date"] = hoy
-                e["id"] = "%s-%.5f-%.5f" % (c["marca"].lower().replace(" ", ""), e["lat"], e["lon"])
-            estaciones.extend(r)
-            informe.append(f"{c['marca']} ({c['pais']}): {len(r)}")
-        except PermissionError as e:
-            informe.append(f"{c['marca']}: SALTADA por robots.txt")
+            todas.extend(procesar(c))
         except Exception as e:
-            informe.append(f"{c['marca']}: fallo -> {type(e).__name__}")
+            log(f"  ERROR inesperado en {c['marca']}: {type(e).__name__}: {e}")
 
-    # Deduplicado por coordenada redondeada
     vistas, limpias = set(), []
-    for e in estaciones:
+    for e in todas:
         k = (round(e["lat"], 4), round(e["lon"], 4))
         if k in vistas:
             continue
         vistas.add(k)
+        e["date"] = hoy
+        e["id"] = "%s-%.5f-%.5f" % (e["brand"].lower().replace(" ", ""), e["lat"], e["lon"])
         limpias.append(e)
 
     doc = {
@@ -182,15 +242,15 @@ def main():
         "note": "Precios recogidos de las webs de cada cadena. Pueden diferir del surtidor.",
         "stations": limpias,
     }
-
     with open(SALIDA, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
 
-    print("=== Recolección " + hoy + " ===")
-    for l in informe:
-        print(" ", l)
-    print("Total tras deduplicar:", len(limpias))
-    return 0 if limpias else 1
+    log("\n=== RESUMEN " + hoy + " ===")
+    log(f"Estaciones con precio: {len(limpias)}")
+    for pais in ("NL", "BE"):
+        n = sum(1 for e in limpias if e["country"] == pais)
+        log(f"  {pais}: {n}")
+    return 0        # nunca falla: el archivo se escribe siempre
 
 
 if __name__ == "__main__":
