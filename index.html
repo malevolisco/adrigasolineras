@@ -429,8 +429,9 @@
         });
         propioOK=(j.stations||[]).length;
         var t=$("src");
-        if(t) t.innerHTML+="<br>NL y BE: "+propioOK+" estaciones propias, actualizado "+
-          String(j.updated||"").slice(0,16).replace("T"," ")+".";
+        if(t) t.innerHTML+="<br>NL y BE: "+propioOK+" estaciones con precio, v\u00eda "+
+          '<a href="https://prijzenindex.nl" target="_blank" rel="noopener" style="color:#8B94A2">Prijzenindex</a>'+
+          ", actualizado "+String(j.updated||"").slice(0,16).replace("T"," ")+".";
         render();
       })
       .catch(function(){ propioOK=0; });   // sin archivo aún: se sigue con las medias
