@@ -499,11 +499,18 @@ def sin_tags(t):
     return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', t)).strip()
 
 
+def limpia_fila(f):
+    """Al partir por <tr, el trozo empieza con el resto de la etiqueta:
+       class="fuel-station "> ... Se descarta hasta el primer cierre."""
+    i = f.find('>')
+    return f[i + 1:] if 0 <= i < 200 else f
+
+
 def pi_ciudad(url, pais, muestra=False):
     html, diag = traer(PI_BASE + url)
     if html is None:
         return [], diag
-    filas = re.split(r'<tr[\s>]', html)[1:]
+    filas = [limpia_fila(x) for x in re.split(r'<tr[\s>]', html)[1:]]
     if muestra and filas:
         log(f"  fila de ejemplo: {filas[0][:500]}")
     fuera = []
@@ -528,6 +535,8 @@ def pi_ciudad(url, pais, muestra=False):
         if mm:
             marca = _html.unescape(mm.group(1)).strip()
         texto = _html.unescape(sin_tags(f))
+        texto = re.sub(r'class="[^"]*"?>?', ' ', texto)
+        texto = re.sub(r'\s{2,}', ' ', texto).strip()
         dir_ = ""
         d = re.search(r'(?:€|EUR)?\s*\d[.,]\d{2,3}\s+(.{4,60}?)\s{2,}', texto)
         if d:
@@ -550,7 +559,7 @@ def prijzenindex(c):
             continue
         # El indice del pais ya lista estaciones: se extraen tambien de ahi
         n_idx = 0
-        for f in re.split(r'<tr[\s>]', html)[1:]:
+        for f in [limpia_fila(x) for x in re.split(r'<tr[\s>]', html)[1:]]:
             c = PI_COORD.search(f)
             if not c:
                 continue
