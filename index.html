@@ -5,12 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ruta diésel · Europa</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
 <style>
   :root{--board:#11151C;--panel:#161B23;--led:#FFB000;--signage:#0B3C7D;--ink:#141922;
         --soft:#8B94A2;--green:#4ADE80;--line:#232A35}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
-  body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;display:flex;background:var(--board)}
+  body{font-family:"Space Grotesk","Helvetica Neue",Helvetica,Arial,sans-serif;
+       display:flex;background:var(--board);-webkit-font-smoothing:antialiased}
+  .num,.pop-p,#ref,.st b,.best .pz,.km{font-family:"Space Mono","SF Mono",monospace}
   #map{flex:1;min-width:0;background:#dfe4ea}
 
   aside{width:355px;flex:0 0 355px;background:var(--panel);color:#fff;display:flex;
@@ -95,6 +100,30 @@
   .pop-b a{flex:1;text-align:center;background:#0B3C7D;color:#fff;text-decoration:none;
            font-size:.7rem;font-weight:700;padding:.35rem;border-radius:6px}
   .pop-b a.alt{background:#fff;color:#0B3C7D;border:1px solid #D3D9E2}
+  /* ---- Buscador ---- */
+  .find{position:relative;padding:.5rem .75rem;border-bottom:1px solid var(--line)}
+  .find input{width:100%;background:#0C1017;border:1px solid var(--line);border-radius:8px;
+              color:#fff;font:inherit;font-size:.85rem;padding:.5rem .7rem .5rem 1.9rem}
+  .find input:focus{outline:none;border-color:var(--led)}
+  .find:before{content:"";position:absolute;left:1.25rem;top:50%;width:11px;height:11px;
+               margin-top:-7px;border:2px solid var(--soft);border-radius:50%}
+  .find:after{content:"";position:absolute;left:2rem;top:50%;width:2px;height:7px;
+              margin-top:2px;background:var(--soft);transform:rotate(-45deg)}
+  #sug{position:absolute;left:.75rem;right:.75rem;top:2.9rem;z-index:1200;
+       background:#0C1017;border:1px solid var(--line);border-radius:8px;overflow:hidden;display:none}
+  #sug.on{display:block}
+  #sug div{padding:.45rem .7rem;font-size:.8rem;cursor:pointer;border-bottom:1px solid var(--line)}
+  #sug div:last-child{border-bottom:0}
+  #sug div:hover,#sug div.sel{background:#182029}
+  #sug small{display:block;color:var(--soft);font-size:.66rem}
+
+  /* ---- Acentos: quita el aire de plantilla ---- */
+  .hd{position:relative}
+  .hd:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;
+            background:linear-gradient(90deg,var(--led) 0 38%,transparent 38%)}
+  .hd b{font-weight:700}
+  h3{position:relative;padding-left:.7rem}
+  h3:before{content:"";position:absolute;left:0;top:.15em;width:3px;height:.85em;background:var(--led)}
 </style>
 </head>
 <body>
@@ -103,6 +132,10 @@
 
 <aside>
   <div class="hd"><b>RUTA · DIÉSEL · EUROPA</b><i id="ref">—</i></div>
+  <div class="find">
+    <input id="q" placeholder="Buscar un sitio, calle o pueblo" autocomplete="off" spellcheck="false">
+    <div id="sug"></div>
+  </div>
   <div class="chips" id="chips"></div>
   <div class="scroll">
 
