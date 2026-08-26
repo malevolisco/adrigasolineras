@@ -80,6 +80,21 @@
     #map{flex:1 1 55%}
     aside{width:auto;flex:0 0 45%;border-left:0;border-top:2px solid #000}
   }
+  .leaflet-popup-content{margin:0!important;width:auto!important}
+  .leaflet-popup-content-wrapper{border-radius:10px;overflow:hidden;padding:0}
+  .pop{font-family:inherit;min-width:180px}
+  .pop-h{color:#fff;font-size:.62rem;font-weight:800;letter-spacing:.08em;
+         text-transform:uppercase;padding:.3rem .6rem}
+  .pop b{display:block;font-size:.92rem;padding:.45rem .6rem 0}
+  .pop i{display:block;font-style:normal;color:#5A6473;font-size:.72rem;padding:.1rem .6rem}
+  .pop-p{color:#1E7A3C;font-weight:800;font-size:1.25rem;padding:.25rem .6rem .1rem;
+         font-variant-numeric:tabular-nums}
+  .pop-p small{color:#5A6473;font-weight:400;font-size:.62rem}
+  .pop-n{color:#5A6473;font-size:.75rem;padding:.3rem .6rem}
+  .pop-b{display:flex;gap:.3rem;padding:.5rem .6rem .6rem}
+  .pop-b a{flex:1;text-align:center;background:#0B3C7D;color:#fff;text-decoration:none;
+           font-size:.7rem;font-weight:700;padding:.35rem;border-radius:6px}
+  .pop-b a.alt{background:#fff;color:#0B3C7D;border:1px solid #D3D9E2}
 </style>
 </head>
 <body>
@@ -164,10 +179,13 @@
   /* ------------- Mapa ------------- */
   var map=L.map("map",{zoomControl:true}).setView([46.5,2.5],5);
   var TILES=[
-    {u:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-     o:{subdomains:"abcd",maxZoom:20,attribution:"&copy; OpenStreetMap &copy; CARTO"}},
+    {u:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+     o:{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}},
     {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-     o:{maxZoom:19,attribution:"Esri, &copy; OpenStreetMap"}}];
+     o:{maxZoom:19,attribution:"Esri, &copy; OpenStreetMap"}},
+    {u:"https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png",
+     o:{subdomains:"abc",maxZoom:18,attribution:"&copy; OpenStreetMap"}}
+  ];
   var tl=null,terr=0;
   function tiles(i){
     if(i>=TILES.length) return;
@@ -550,12 +568,25 @@
             (s.price?' <em>'+eur(s.price)+'</em>':"")+"</span>";
       }
     }
+    var limpio=(s.sub||"").replace(/<[^>]*>/g,"").replace(/class="[^"]*"?>?/g,"")
+                 .replace(/[€"]|\d+[.,]\d{2,3}/g,"").replace(/\s{2,}/g," ").trim();
+    var ficha=
+      '<div class="pop">'+
+        '<div class="pop-h" style="background:'+s.brand.color+'">'+esc(s.brand.name)+'</div>'+
+        '<b>'+esc(s.name)+'</b>'+
+        (limpio?'<i>'+esc(limpio)+'</i>':"")+
+        (s.price?'<div class="pop-p">'+eur(s.price)+' <small>/ litro</small></div>'
+                :'<div class="pop-n">Sin precio oficial publicado</div>')+
+        '<div class="pop-b">'+
+          '<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+
+            s.lat+','+s.lon+'">Cómo llegar</a>'+
+          '<a class="alt" target="_blank" rel="noopener" href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint='+
+            s.lat+','+s.lon+'">Ver la gasolinera</a>'+
+        '</div>'+
+      '</div>';
     markers[s.id]=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"",iconSize:null,
       html:'<div style="position:relative"><div class="'+cls+'" style="background:'+s.brand.color+'"></div>'+tag+"</div>"})})
-      .bindPopup("<b>"+esc(s.name)+"</b>"+(s.sub?"<br>"+esc(s.sub):"")+
-        (s.price?"<br><b>"+eur(s.price)+"</b> por litro (oficial)":"<br>Sin precio oficial publicado")+
-        '<br><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+
-        s.lat+","+s.lon+'">Cómo llegar</a>').addTo(pinLayer);
+      .bindPopup(ficha,{minWidth:190,closeButton:true}).addTo(pinLayer);
   }
   function row(host,pz,est,nm,sub,s){
     var d=document.createElement("div");
