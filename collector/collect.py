@@ -38,7 +38,7 @@ from urllib.request import Request, urlopen
 RESPETAR_ROBOTS = False
 
 AGENTE = "RutaDieselBot/1.0 (proyecto personal no comercial)"
-ESPERA = 1.5
+ESPERA = 1.2
 SALIDA = "precios.json"
 LOG = []
 
@@ -589,7 +589,7 @@ def prijzenindex(c):
             if u not in ciudades:
                 ciudades.append(u)
         log(f"  ciudades encontradas en {pais}: {len(ciudades)}")
-        for i, u in enumerate(ciudades[:80]):
+        for i, u in enumerate(ciudades[:250]):
             filas, diag = pi_ciudad(u, pais, muestra=(i == 0 and pais == "BE"))
             nuevas = 0
             for e in filas:
