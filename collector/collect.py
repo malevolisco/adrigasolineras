@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 """
-Recolector de precios de diesel por estacion — Paises Bajos y Belgica. v2
+Recolector de precios por estacion — Paises Bajos y Belgica. v3
 
-Novedades frente a la v1:
+Novedades frente a la v2:
+  - Multicarburante. Ya no se recoge solo el gasoleo: se barren tambien
+    gasolina (E10) de Belgica y Paises Bajos y GLP de Paises Bajos, que
+    son los unicos listados que Prijzenindex publica por estacion.
+  - Cada estacion guarda un diccionario "prices" con los carburantes que
+    tenga: {"diesel": 2.129, "e10": 2.139, "glp": 0.759}. Se conserva
+    ademas el campo suelto "price" con el gasoleo, para no romper nada
+    que ya lo estuviera leyendo.
+  - Fusion por coordenadas en lugar de descarte: la misma estacion sale
+    en el listado de diesel y en el de gasolina, y antes la segunda
+    aparicion se tiraba por duplicada. Ahora se funden en un solo
+    registro y se suman los precios.
+  - Rango de validacion por carburante. El GLP ronda los 0,76 €/l y con
+    el filtro unico de la v2 (0,8 a 4) se descartaba entero.
+  - Cada carburante se recoge de forma independiente: si la pagina de
+    GLP falla o cambia de maqueta, el diesel del dia se publica igual.
+
+De la v2 se mantiene:
   - No hace falta acertar la URL: parte de la portada de cada cadena y
     busca sola los enlaces que huelen a listado de estaciones.
   - Prueba varias direcciones candidatas y cuenta que pasa en cada una.
@@ -41,6 +58,16 @@ AGENTE = "RutaDieselBot/1.0 (proyecto personal no comercial)"
 ESPERA = 1.2
 SALIDA = "precios.json"
 LOG = []
+
+# Pasar de dos listados a cinco multiplica por 2,5 el tiempo de ejecucion.
+# Con este tope el trabajo nunca se queda colgado: al agotarlo se deja de
+# barrer ciudades y se publica lo que haya, que es preferible a no publicar.
+TOPE_MINUTOS = 150
+ARRANQUE = time.monotonic()
+
+
+def queda_tiempo():
+    return (time.monotonic() - ARRANQUE) / 60 < TOPE_MINUTOS
 
 _robots = {}
 
@@ -97,12 +124,43 @@ def traer(url, timeout=25):
 
 # ------------------------------------------------------------ extraccion
 
-def a_float(v):
+# ---------------------------------------------------------------------------
+# Vocabulario de carburantes. Es el mismo que usa el mapa, asi que si aqui se
+# anade una clave hay que anadirla alli. Se separa E5 de E10 a proposito: son
+# productos distintos y se llevan varios centimos, y Francia los publica por
+# separado. "p98" es la 98 de toda la vida (E5).
+# ---------------------------------------------------------------------------
+COMBUSTIBLES = ("diesel", "e5", "e10", "p98", "glp", "e85")
+
+ETIQUETA = {
+    "diesel": "Diesel (B7)",
+    "e5": "Gasolina 95 E5",
+    "e10": "Gasolina 95 E10",
+    "p98": "Gasolina 98",
+    "glp": "GLP",
+    "e85": "E85",
+}
+
+# Rango plausible por litro. El GLP baja de 0,80 € y por eso no puede
+# compartir el filtro con los liquidos: con el rango unico de la v2 se
+# descartaba entero sin dejar rastro en el registro.
+RANGO = {
+    "diesel": (0.80, 4.00),
+    "e5": (0.80, 4.50),
+    "e10": (0.80, 4.50),
+    "p98": (0.80, 4.50),
+    "glp": (0.35, 2.20),
+    "e85": (0.40, 3.00),
+}
+
+
+def a_float(v, comb="diesel"):
     try:
         f = float(str(v).replace(",", "."))
     except (TypeError, ValueError):
         return None
-    return f if 0.8 < f < 4 else None
+    lo, hi = RANGO.get(comb, (0.80, 4.00))
+    return f if lo < f < hi else None
 
 
 def bloques_json(html):
@@ -132,44 +190,60 @@ def bloques_json(html):
     return out
 
 
-DIESEL_TXT = re.compile(r'(?i)\b(diesel|gazole|gasoil|b7)\b')
+# Como se nombra cada carburante en las webs que se leen. El orden importa:
+# "euro95" a secas es E10 en Paises Bajos, asi que E5 exige que lo diga.
+TXT = {
+    "diesel": re.compile(r'(?i)\b(diesel|gazole|gasoil|b7)\b'),
+    "e5": re.compile(r'(?i)(euro\s?95\s*\(?\s*e5|sp\s?95(?!\s*[-\s]?e10)|super\s?95\s*e5|\be5\b)'),
+    "e10": re.compile(r'(?i)(euro\s?95|benzine|essence|sp\s?95[-\s]?e10|\be10\b)'),
+    "p98": re.compile(r'(?i)(euro\s?98|super\s?98|sp\s?98|\b98\s*\(?e5)'),
+    "glp": re.compile(r'(?i)\b(lpg|glp|gpl|gplc|autogas)\b'),
+    "e85": re.compile(r'(?i)(e85|super\s?ethanol|superéthanol)'),
+}
+DIESEL_TXT = TXT["diesel"]      # se conserva el nombre por compatibilidad
 
 
-def precio_diesel(obj, prof=0):
+def precio_de(obj, comb="diesel", prof=0):
     """
-    Busca el precio de diesel en cualquier sitio del subarbol.
+    Busca el precio del carburante indicado en cualquier sitio del subarbol.
     Cubre los dos formatos habituales:
       a) plano:   {"diesel": 2.292}
       b) anidado: {"fuelPrices":[{"fuelProductType":"DIESEL","price":2.292}]}
     """
     if prof > 6:
         return None
+    patron = TXT.get(comb, TXT["diesel"])
     if isinstance(obj, dict):
-        # (a) una clave que menciona diesel y lleva el numero
+        # (a) una clave que menciona el carburante y lleva el numero
         for k, v in obj.items():
-            if DIESEL_TXT.search(str(k)) and not isinstance(v, (dict, list)):
-                p = a_float(v)
+            if patron.search(str(k)) and not isinstance(v, (dict, list)):
+                p = a_float(v, comb)
                 if p:
                     return p
-        # (b) un objeto que se identifica como diesel y guarda el precio aparte
-        marcado = any(DIESEL_TXT.search(str(v)) for v in obj.values()
+        # (b) un objeto que se identifica con ese carburante y guarda el
+        #     precio en otra clave
+        marcado = any(patron.search(str(v)) for v in obj.values()
                       if not isinstance(v, (dict, list)))
         if marcado:
             for k, v in obj.items():
                 if re.search(r'(?i)pric|prijs|prix|amount|value|tarief', str(k)):
-                    p = a_float(v)
+                    p = a_float(v, comb)
                     if p:
                         return p
         for v in obj.values():
-            p = precio_diesel(v, prof + 1)
+            p = precio_de(v, comb, prof + 1)
             if p:
                 return p
     elif isinstance(obj, list):
         for v in obj:
-            p = precio_diesel(v, prof + 1)
+            p = precio_de(v, comb, prof + 1)
             if p:
                 return p
     return None
+
+
+def precio_diesel(obj, prof=0):
+    return precio_de(obj, "diesel", prof)
 
 
 def rastrea(obj, salida):
@@ -183,10 +257,15 @@ def rastrea(obj, salida):
             if lon is None and kl in ("lng", "lon", "long", "longitude", "lengtegraad"):
                 lon = a_coord(v)
         if lat is not None and lon is not None:
-            precio = precio_diesel(obj)
-            if precio:
+            precios = {}
+            for comb in COMBUSTIBLES:
+                p = precio_de(obj, comb)
+                if p:
+                    precios[comb] = p
+            if precios:
                 salida.append({
-                    "lat": lat, "lon": lon, "price": precio,
+                    "lat": lat, "lon": lon,
+                    "price": precios.get("diesel"), "prices": precios,
                     "name": obj.get("name") or obj.get("title") or obj.get("naam")
                             or obj.get("displayName") or "",
                     "city": obj.get("city") or obj.get("plaats") or obj.get("gemeente")
@@ -244,6 +323,7 @@ def del_html(html, marca):
             continue
         nm = NOMBRE_HTML.search(ventana)
         fuera.append({"lat": la, "lon": lo, "price": precio,
+                      "prices": {"diesel": precio},
                       "name": (nm.group(1) if nm else marca), "city": ""})
     return fuera
 
@@ -306,6 +386,7 @@ def ficha_drupal(html, marca, pais, url):
     sub = f"{dm.group(1).strip()}, {dm.group(2).strip()} {dm.group(3).strip()}" if dm else ""
     nombre = url.rstrip("/").split("/")[-1].replace("-", " ").title()
     return {"lat": lat, "lon": lon, "price": precio,
+            "prices": {"diesel": precio},
             "name": f"{marca} {nombre}", "city": sub}
 
 
@@ -464,17 +545,22 @@ def dats24(c):
             d, _ = postjson(DETAILS, cuerpo)
             if not d:
                 continue
-            precio = precio_diesel(d)
-            if not precio:
+            precios = {}
+            for comb in COMBUSTIBLES:
+                pc = precio_de(d, comb)
+                if pc:
+                    precios[comb] = pc
+            if not precios:
                 continue
             fuera.append({
-                "lat": e.get("latitude"), "lon": e.get("longitude"), "price": precio,
+                "lat": e.get("latitude"), "lon": e.get("longitude"),
+                "price": precios.get("diesel"), "prices": precios,
                 "name": "DATS 24 " + str(e.get("addressCity") or ""),
                 "city": f"{e.get('addressStreet','')} {e.get('addressNumber','')}".strip(),
             })
             if i % 25 == 0:
                 log(f"  ... {i+1}/{len(estaciones)} fichas, {len(fuera)} con precio")
-    log(f"  DATS 24: {len(fuera)} con precio de diesel")
+    log(f"  DATS 24: {len(fuera)} con algun precio")
     return fuera
 
 
@@ -485,9 +571,24 @@ def dats24(c):
 # Es la via mas directa para cubrir los dos paises que no tienen dato abierto.
 # ---------------------------------------------------------------------------
 PI_BASE = "https://prijzenindex.nl"
-PI_RAICES = [("BE", "/brandstof/diesel-belgie"), ("NL", "/brandstof/diesel")]
 
-PI_CIUDAD = re.compile(r'href="(?:https?://[^"/]+)?(/brandstof/diesel(?:-belgie)?/[a-z0-9\\-]+)/?"', re.I)
+# (carburante, pais, raiz). Comprobado en el indice del propio sitio: para
+# Belgica y Paises Bajos solo existen estas cinco combinaciones. No hay
+# pagina de 98 ni de E5, y el GLP solo esta en Paises Bajos. Lo que
+# Prijzenindex llama "benzine" es E10, no E5: por eso se cataloga asi.
+PI_FUENTES = [
+    ("diesel", "BE", "/brandstof/diesel-belgie"),
+    ("diesel", "NL", "/brandstof/diesel"),
+    ("e10",    "BE", "/brandstof/benzine-belgie"),
+    ("e10",    "NL", "/brandstof/benzine"),
+    ("glp",    "NL", "/brandstof/lpg"),
+]
+
+
+def pi_re_ciudad(raiz):
+    """Enlaces a las ciudades colgando de esa raiz, sea el carburante que sea."""
+    return re.compile(r'href="(?:https?://[^"/]+)?(' + re.escape(raiz) +
+                      r'/[a-z0-9\-]+)/?"', re.I)
 PI_COORD = re.compile(r'destination=(-?\d+\.\d+),(-?\d+\.\d+)')
 PI_PRECIO = re.compile(r'&euro;|\u20ac|€')
 PI_NUM = re.compile(r'(\d[.,]\d{2,3})')
@@ -506,7 +607,43 @@ def limpia_fila(f):
     return f[i + 1:] if 0 <= i < 200 else f
 
 
-def pi_ciudad(url, pais, muestra=False):
+def pi_fila(f, comb):
+    """Una fila de la tabla -> registro, o None si no lleva precio util."""
+    c = PI_COORD.search(f)
+    if not c:
+        return None
+    lat, lon = a_coord(c.group(1)), a_coord(c.group(2))
+    if lat is None or lon is None:
+        return None
+    # el precio es el primer numero tras el simbolo del euro
+    pos = 0
+    m = PI_PRECIO.search(f)
+    if m:
+        pos = m.end()
+    n = PI_NUM.search(f, pos)
+    precio = a_float(n.group(1), comb) if n else None
+    if not precio:
+        return None
+    marca = ""
+    mm = PI_MARCA.search(f)
+    if mm:
+        marca = _html.unescape(mm.group(1)).strip()
+    texto = _html.unescape(sin_tags(f))
+    texto = re.sub(r'class="[^"]*"?>?', ' ', texto)
+    texto = re.sub(r'\s{2,}', ' ', texto).strip()
+    d = re.search(r'(?:€|EUR)?\s*\d[.,]\d{2,3}\s+(.{4,60}?)\s{2,}', texto)
+    if d:
+        dir_ = d.group(1)
+    else:
+        partes = texto.split()
+        dir_ = " ".join(partes[2:8]) if len(partes) > 8 else texto[:60]
+    viejo = bool(PI_VIEJO.search(f))
+    return {"lat": lat, "lon": lon, "price": precio,
+            "prices": {comb: precio}, "viejo": {comb: viejo},
+            "name": (marca or "Gasolinera"), "city": dir_}
+
+
+def pi_ciudad(url, comb, muestra=False):
     html, diag = traer(PI_BASE + url)
     if html is None:
         return [], diag
@@ -515,97 +652,91 @@ def pi_ciudad(url, pais, muestra=False):
         log(f"  fila de ejemplo: {filas[0][:500]}")
     fuera = []
     for f in filas:
-        c = PI_COORD.search(f)
-        if not c:
-            continue
-        lat, lon = a_coord(c.group(1)), a_coord(c.group(2))
-        if lat is None or lon is None:
-            continue
-        # el precio es el primer numero tras el simbolo del euro
-        pos = 0
-        m = PI_PRECIO.search(f)
-        if m:
-            pos = m.end()
-        n = PI_NUM.search(f, pos)
-        precio = a_float(n.group(1)) if n else None
-        if not precio:
-            continue
-        marca = ""
-        mm = PI_MARCA.search(f)
-        if mm:
-            marca = _html.unescape(mm.group(1)).strip()
-        texto = _html.unescape(sin_tags(f))
-        texto = re.sub(r'class="[^"]*"?>?', ' ', texto)
-        texto = re.sub(r'\s{2,}', ' ', texto).strip()
-        dir_ = ""
-        d = re.search(r'(?:€|EUR)?\s*\d[.,]\d{2,3}\s+(.{4,60}?)\s{2,}', texto)
-        if d:
-            dir_ = d.group(1)
-        else:
-            partes = texto.split()
-            dir_ = " ".join(partes[2:8]) if len(partes) > 8 else texto[:60]
-        fuera.append({"lat": lat, "lon": lon, "price": precio,
-                      "name": (marca or "Gasolinera"), "city": dir_,
-                      "viejo": bool(PI_VIEJO.search(f))})
+        e = pi_fila(f, comb)
+        if e:
+            fuera.append(e)
     return fuera, diag
 
 
-def prijzenindex(c):
-    todo, vistas = [], set()
-    for pais, raiz in PI_RAICES:
-        html, diag = traer(PI_BASE + raiz)
-        log(f"  indice {pais} {raiz} -> {diag}")
-        if html is None:
+def prijzenindex(cadena):
+    """
+    Cada carburante se recoge por separado y dentro de su propio try: si la
+    pagina de GLP cambia de maqueta o cae, el diesel del dia se publica igual.
+    La deduplicacion es por (carburante, coordenadas): la misma estacion tiene
+    que poder aparecer una vez en diesel y otra en gasolina. La fusion de las
+    dos en un solo registro se hace despues, en main().
+    """
+    todo = []
+    for comb, pais, raiz in PI_FUENTES:
+        try:
+            hallado = pi_fuente(comb, pais, raiz)
+        except Exception as e:
+            log(f"  ERROR en {ETIQUETA.get(comb, comb)} {pais}: {type(e).__name__}: {e}")
             continue
-        # El indice del pais ya lista estaciones: se extraen tambien de ahi
-        n_idx = 0
-        for f in [limpia_fila(x) for x in re.split(r'<tr[\s>]', html)[1:]]:
-            c = PI_COORD.search(f)
-            if not c:
-                continue
-            lat, lon = a_coord(c.group(1)), a_coord(c.group(2))
-            m2 = PI_PRECIO.search(f)
-            n2 = PI_NUM.search(f, m2.end() if m2 else 0)
-            precio = a_float(n2.group(1)) if n2 else None
-            if lat is None or lon is None or not precio:
-                continue
-            k = (round(lat, 4), round(lon, 4))
-            if k in vistas:
-                continue
-            vistas.add(k)
-            mm2 = PI_MARCA.search(f)
-            marca = _html.unescape(mm2.group(1)).strip() if mm2 else "Gasolinera"
-            todo.append({"lat": lat, "lon": lon, "price": precio, "name": marca,
-                         "city": "", "viejo": bool(PI_VIEJO.search(f)),
-                         "brand": marca, "country": pais, "source": "Prijzenindex"})
-            n_idx += 1
-        log(f"  del propio indice {pais}: {n_idx} estaciones, total {len(todo)}")
+        todo.extend(hallado)
 
-        ciudades = []
-        for m in PI_CIUDAD.finditer(html):
-            u = m.group(1)
-            if u.rstrip("/") == raiz.rstrip("/"):
-                continue
-            if u not in ciudades:
-                ciudades.append(u)
-        log(f"  ciudades encontradas en {pais}: {len(ciudades)}")
-        for i, u in enumerate(ciudades[:250]):
-            filas, diag = pi_ciudad(u, pais, muestra=(i == 0 and pais == "BE"))
-            nuevas = 0
-            for e in filas:
-                k = (round(e["lat"], 4), round(e["lon"], 4))
-                if k in vistas:
-                    continue
-                vistas.add(k)
-                e["brand"] = e["name"]
-                e["country"] = pais
-                e["source"] = "Prijzenindex"
-                todo.append(e)
-                nuevas += 1
-            if i % 10 == 0 or nuevas:
-                log(f"  {u} -> {len(filas)} filas, {nuevas} nuevas (total {len(todo)})")
-    viejos = sum(1 for e in todo if e.get("viejo"))
-    log(f"  Prijzenindex: {len(todo)} estaciones con precio ({viejos} marcadas como no actuales)")
+    # Resumen por carburante y pais, que es lo que hay que mirar cuando algo falla
+    log("\n  === PRIJZENINDEX: RESUMEN ===")
+    for comb in COMBUSTIBLES:
+        for pais in ("BE", "NL"):
+            n = sum(1 for e in todo if comb in e.get("prices", {}) and e["country"] == pais)
+            if n:
+                log(f"  {ETIQUETA.get(comb, comb):<16} {pais}: {n}")
+    log(f"  filas totales: {len(todo)}")
+    return todo
+
+
+def pi_fuente(comb, pais, raiz):
+    """Un carburante en un pais: indice del pais + hasta 250 ciudades."""
+    etiqueta = ETIQUETA.get(comb, comb)
+    log(f"\n  --- {etiqueta} en {pais} ({raiz}) ---")
+    html, diag = traer(PI_BASE + raiz)
+    log(f"  indice -> {diag}")
+    if html is None:
+        return []
+
+    todo, vistas = [], set()
+
+    def guarda(e):
+        k = (round(e["lat"], 4), round(e["lon"], 4))
+        if k in vistas:
+            return False
+        vistas.add(k)
+        e["brand"] = e["name"]
+        e["country"] = pais
+        e["source"] = "Prijzenindex"
+        todo.append(e)
+        return True
+
+    # El indice del pais ya lista estaciones: se extraen tambien de ahi
+    n_idx = 0
+    for f in [limpia_fila(x) for x in re.split(r'<tr[\s>]', html)[1:]]:
+        e = pi_fila(f, comb)
+        if e and guarda(e):
+            n_idx += 1
+    log(f"  del propio indice: {n_idx} estaciones")
+
+    ciudades = []
+    for m in pi_re_ciudad(raiz).finditer(html):
+        u = m.group(1)
+        if u.rstrip("/") == raiz.rstrip("/"):
+            continue
+        if u not in ciudades:
+            ciudades.append(u)
+    log(f"  ciudades encontradas: {len(ciudades)}")
+
+    for i, u in enumerate(ciudades[:250]):
+        if not queda_tiempo():
+            log(f"  tope de {TOPE_MINUTOS} min alcanzado: se corta en la ciudad {i} "
+                f"de {len(ciudades[:250])} y se publica lo recogido")
+            break
+        filas, diag = pi_ciudad(u, comb, muestra=(i == 0))
+        nuevas = sum(1 for e in filas if guarda(e))
+        if i % 25 == 0 or nuevas:
+            log(f"  {u} -> {len(filas)} filas, {nuevas} nuevas (total {len(todo)})")
+
+    viejos = sum(1 for e in todo if e.get("viejo", {}).get(comb))
+    log(f"  {etiqueta} {pais}: {len(todo)} con precio ({viejos} marcadas como no actuales)")
     return todo
 
 
@@ -639,7 +770,7 @@ def procesar(c):
             e.setdefault("brand", marca)
             e.setdefault("country", pais)
             e.setdefault("source", marca)
-        return r
+        return [e for e in map(normaliza, r) if e]
 
     portada, diag = traer(base)
     log(f"  portada {base} -> {diag}")
@@ -676,7 +807,37 @@ def procesar(c):
         e["brand"] = marca
         e["country"] = pais
         e["source"] = marca
-    return mejor
+    return [e for e in map(normaliza, mejor) if e]
+
+
+def normaliza(e):
+    """
+    Deja todo registro con la misma forma antes de fusionar:
+      prices -> diccionario {carburante: precio}
+      viejo  -> diccionario {carburante: bool}
+    Los extractores antiguos que solo devuelven "price" siguen valiendo:
+    se interpreta como gasoleo, que es lo que recogian.
+    """
+    if not e or e.get("lat") is None or e.get("lon") is None:
+        return None
+    precios = e.get("prices")
+    if not isinstance(precios, dict) or not precios:
+        p = e.get("price")
+        precios = {"diesel": p} if p else {}
+    limpio = {}
+    for comb, p in precios.items():
+        v = a_float(p, comb)
+        if v:
+            limpio[comb] = v
+    if not limpio:
+        return None
+    e["prices"] = limpio
+    viejo = e.get("viejo")
+    if not isinstance(viejo, dict):
+        viejo = {c: bool(viejo) for c in limpio}
+    e["viejo"] = {c: bool(viejo.get(c)) for c in limpio}
+    e["price"] = limpio.get("diesel")
+    return e
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +885,42 @@ def descubrir_marcas():
     log("  ============================================\n")
 
 
+# ---------------------------------------------------------------------------
+# Fusion por coordenadas. En la v2 el duplicado se descartaba; ahora se funde,
+# porque la misma estacion aparece una vez por carburante y cada aparicion
+# trae un precio distinto que hay que conservar.
+# ---------------------------------------------------------------------------
+def fusiona(todas, hoy):
+    fusion, orden = {}, []
+    for e in todas:
+        k = (round(e["lat"], 4), round(e["lon"], 4))
+        base = fusion.get(k)
+        if base is None:
+            fusion[k] = e
+            orden.append(k)
+            continue
+        for comb, p in e["prices"].items():
+            if comb not in base["prices"]:
+                base["prices"][comb] = p
+                base["viejo"][comb] = e["viejo"].get(comb, False)
+        # Un nombre real gana al generico, venga de la pasada que venga
+        if base.get("name", "") in ("", "Gasolinera") and e.get("name"):
+            base["name"] = e["name"]
+            base["brand"] = e.get("brand") or e["name"]
+        if not base.get("city") and e.get("city"):
+            base["city"] = e["city"]
+
+    limpias = []
+    for k in orden:
+        e = fusion[k]
+        e["date"] = hoy
+        e["price"] = e["prices"].get("diesel")
+        e["id"] = "%s-%.5f-%.5f" % (str(e.get("brand") or "estacion").lower().replace(" ", ""),
+                                    e["lat"], e["lon"])
+        limpias.append(e)
+    return limpias
+
+
 def main():
     hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     descubrir_marcas()
@@ -734,19 +931,14 @@ def main():
         except Exception as e:
             log(f"  ERROR inesperado en {c['marca']}: {type(e).__name__}: {e}")
 
-    vistas, limpias = set(), []
-    for e in todas:
-        k = (round(e["lat"], 4), round(e["lon"], 4))
-        if k in vistas:
-            continue
-        vistas.add(k)
-        e["date"] = hoy
-        e["id"] = "%s-%.5f-%.5f" % (e["brand"].lower().replace(" ", ""), e["lat"], e["lon"])
-        limpias.append(e)
+    limpias = fusiona(todas, hoy)
 
     doc = {
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "count": len(limpias),
+        "fuels": [c for c in COMBUSTIBLES
+                  if any(c in e["prices"] for e in limpias)],
+        "labels": {c: ETIQUETA[c] for c in COMBUSTIBLES},
         "note": "Precios recogidos de las webs de cada cadena. Pueden diferir del surtidor.",
         "stations": limpias,
     }
@@ -754,10 +946,17 @@ def main():
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
 
     log("\n=== RESUMEN " + hoy + " ===")
-    log(f"Estaciones con precio: {len(limpias)}")
+    log(f"Estaciones distintas: {len(limpias)}")
     for pais in ("NL", "BE"):
         n = sum(1 for e in limpias if e["country"] == pais)
         log(f"  {pais}: {n}")
+    log("Precios por carburante:")
+    for comb in COMBUSTIBLES:
+        n = sum(1 for e in limpias if comb in e["prices"])
+        if n:
+            log(f"  {ETIQUETA[comb]:<16} {n}")
+    multi = sum(1 for e in limpias if len(e["prices"]) > 1)
+    log(f"Estaciones con mas de un carburante: {multi}")
     return 0        # nunca falla: el archivo se escribe siempre
 
 
