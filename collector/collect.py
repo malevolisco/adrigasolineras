@@ -33,11 +33,12 @@ Normas: se respeta robots.txt, agente identificado y dos pasadas al dia.
 
 import html as _html
 import json
+import os
 import re
 import sys
 import time
 import urllib.robotparser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -64,10 +65,56 @@ LOG = []
 # barrer ciudades y se publica lo que haya, que es preferible a no publicar.
 TOPE_MINUTOS = 150
 ARRANQUE = time.monotonic()
+CURSOR = {}          # por que ciudad iba cada fuente, se guarda en precios.json
 
 
-def queda_tiempo():
-    return (time.monotonic() - ARRANQUE) / 60 < TOPE_MINUTOS
+def queda_tiempo(margen=0):
+    return (time.monotonic() - ARRANQUE) / 60 < (TOPE_MINUTOS - margen)
+
+
+# Bloque de ciudades que se barre por fuente en cada vuelta del turno rotatorio.
+# Con bloques pequenos las cinco fuentes avanzan a la vez y ninguna se queda sin
+# tocar cuando se agota el tiempo.
+BLOQUE = 20
+
+# Dias que se conserva un precio antes de tirarlo. Un dato de hace tres semanas
+# ya no sirve para decidir donde repostar, pero uno de anteayer si.
+CADUCA = 21
+
+
+def carga_previo():
+    """
+    Lo recogido en pasadas anteriores. Sin esto, cada ejecucion empezaria de
+    cero y la cobertura no pasaria nunca de lo que cabe en una sola pasada:
+    era justo el motivo de que faltaran provincias enteras.
+    """
+    if not os.path.exists(SALIDA):
+        return {}, {}
+    try:
+        with open(SALIDA, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception as e:
+        log(f"  no se ha podido leer {SALIDA}: {type(e).__name__}: {e}")
+        return {}, {}
+    previo = {}
+    for e in d.get("stations", []):
+        if e.get("lat") is None or e.get("lon") is None:
+            continue
+        # Los ficheros de la v2 solo traian "price" suelto: se interpreta como
+        # gasoleo, que es lo unico que recogia aquella version. Sin esto, una
+        # pasada nueva tiraria a la basura todo lo publicado hasta ahora.
+        if not isinstance(e.get("prices"), dict) or not e["prices"]:
+            e["prices"] = {"diesel": e["price"]} if e.get("price") is not None else {}
+        e.setdefault("pdate", {})
+        if not e["pdate"]:
+            e["pdate"] = {c: e.get("date", "") for c in e["prices"]}
+        # Las pasadas antiguas guardaban "viejo" como booleano suelto
+        if not isinstance(e.get("viejo"), dict):
+            e["viejo"] = {c: bool(e.get("viejo")) for c in e["prices"]}
+        previo[(round(e["lat"], 4), round(e["lon"], 4))] = e
+    cursor = d.get("cursor", {}) or {}
+    log(f"  pasada anterior: {len(previo)} estaciones, cursor {cursor}")
+    return previo, cursor
 
 _robots = {}
 
@@ -660,61 +707,100 @@ def pi_ciudad(url, comb, muestra=False):
 
 def prijzenindex(cadena):
     """
-    Cada carburante se recoge por separado y dentro de su propio try: si la
-    pagina de GLP cambia de maqueta o cae, el diesel del dia se publica igual.
-    La deduplicacion es por (carburante, coordenadas): la misma estacion tiene
-    que poder aparecer una vez en diesel y otra en gasolina. La fusion de las
-    dos en un solo registro se hace despues, en main().
+    Barrido rotatorio. La v3 se paraba en la ciudad 250 de cada listado y
+    reconstruia el fichero desde cero en cada pasada, asi que las ciudades del
+    final de la lista no se visitaban NUNCA: por eso no habia ni una estacion
+    en Tilburg, Breda, Roosendaal o Brujas. Ahora cada fuente recuerda por
+    donde iba, se avanza por turnos de BLOQUE ciudades hasta agotar el tiempo,
+    y la vuelta siguiente arranca donde se quedo la anterior. Como main()
+    fusiona con lo ya publicado, la cobertura se acumula en vez de perderse.
     """
-    todo = []
+    global CURSOR
+    todo, listas, indices = [], {}, {}
+
+    # 1) Indice de cada fuente: estaciones que ya trae y lista de ciudades
     for comb, pais, raiz in PI_FUENTES:
         try:
-            hallado = pi_fuente(comb, pais, raiz)
+            hallado, ciudades = pi_indice(comb, pais, raiz)
         except Exception as e:
-            log(f"  ERROR en {ETIQUETA.get(comb, comb)} {pais}: {type(e).__name__}: {e}")
+            log(f"  ERROR en el indice de {ETIQUETA.get(comb, comb)} {pais}: "
+                f"{type(e).__name__}: {e}")
             continue
         todo.extend(hallado)
+        listas[raiz] = (comb, pais, ciudades)
+        indices[raiz] = CURSOR.get(raiz, 0) % max(len(ciudades), 1)
 
-    # Resumen por carburante y pais, que es lo que hay que mirar cuando algo falla
+    # 2) Turnos: todas las fuentes avanzan a la vez mientras quede tiempo
+    vueltas, hechas = 0, {r: 0 for r in listas}
+    while queda_tiempo(margen=3) and listas:
+        movido = False
+        for raiz in list(listas):
+            if not queda_tiempo(margen=3):
+                break
+            comb, pais, ciudades = listas[raiz]
+            if not ciudades or hechas[raiz] >= len(ciudades):
+                continue                       # esta fuente ya dio la vuelta entera
+            movido = True
+            ini = indices[raiz]
+            for k in range(BLOQUE):
+                if not queda_tiempo(margen=3) or hechas[raiz] >= len(ciudades):
+                    break
+                u = ciudades[(ini + k) % len(ciudades)]
+                try:
+                    filas, _ = pi_ciudad(u, comb)
+                except Exception as e:
+                    log(f"  fallo en {u}: {type(e).__name__}: {e}")
+                    filas = []
+                for e in filas:
+                    e["country"] = pais
+                    e["source"] = "Prijzenindex"
+                    e["brand"] = e["name"]
+                todo.extend(filas)
+                indices[raiz] = (ini + k + 1) % len(ciudades)
+                hechas[raiz] += 1
+        vueltas += 1
+        if not movido:
+            break
+        log(f"  vuelta {vueltas}: " +
+            " · ".join(f"{ETIQUETA.get(listas[r][0], r)[:9]} {hechas[r]}/{len(listas[r][2])}"
+                       for r in listas))
+
+    # 3) Se guarda por donde se ha quedado cada fuente para la proxima pasada
+    for raiz in listas:
+        CURSOR[raiz] = indices[raiz]
+
     log("\n  === PRIJZENINDEX: RESUMEN ===")
+    for raiz in listas:
+        comb, pais, ciudades = listas[raiz]
+        log(f"  {ETIQUETA.get(comb, comb):<16} {pais}: {hechas[raiz]} de {len(ciudades)} "
+            f"ciudades esta pasada, siguiente arranque en la {indices[raiz]}")
     for comb in COMBUSTIBLES:
         for pais in ("BE", "NL"):
-            n = sum(1 for e in todo if comb in e.get("prices", {}) and e["country"] == pais)
+            n = sum(1 for e in todo if comb in e.get("prices", {}) and e.get("country") == pais)
             if n:
-                log(f"  {ETIQUETA.get(comb, comb):<16} {pais}: {n}")
-    log(f"  filas totales: {len(todo)}")
+                log(f"  filas de {ETIQUETA.get(comb, comb):<16} {pais}: {n}")
+    log(f"  filas totales esta pasada: {len(todo)}")
     return todo
 
 
-def pi_fuente(comb, pais, raiz):
-    """Un carburante en un pais: indice del pais + hasta 250 ciudades."""
+def pi_indice(comb, pais, raiz):
+    """Portada de la fuente: estaciones que ya lista y enlaces a sus ciudades."""
     etiqueta = ETIQUETA.get(comb, comb)
     log(f"\n  --- {etiqueta} en {pais} ({raiz}) ---")
     html, diag = traer(PI_BASE + raiz)
     log(f"  indice -> {diag}")
     if html is None:
-        return []
+        return [], []
 
-    todo, vistas = [], set()
-
-    def guarda(e):
-        k = (round(e["lat"], 4), round(e["lon"], 4))
-        if k in vistas:
-            return False
-        vistas.add(k)
-        e["brand"] = e["name"]
-        e["country"] = pais
-        e["source"] = "Prijzenindex"
-        todo.append(e)
-        return True
-
-    # El indice del pais ya lista estaciones: se extraen tambien de ahi
-    n_idx = 0
+    fuera = []
     for f in [limpia_fila(x) for x in re.split(r'<tr[\s>]', html)[1:]]:
         e = pi_fila(f, comb)
-        if e and guarda(e):
-            n_idx += 1
-    log(f"  del propio indice: {n_idx} estaciones")
+        if e:
+            e["country"] = pais
+            e["source"] = "Prijzenindex"
+            e["brand"] = e["name"]
+            fuera.append(e)
+    log(f"  del propio indice: {len(fuera)} estaciones")
 
     ciudades = []
     for m in pi_re_ciudad(raiz).finditer(html):
@@ -723,40 +809,8 @@ def pi_fuente(comb, pais, raiz):
             continue
         if u not in ciudades:
             ciudades.append(u)
-    log(f"  ciudades encontradas: {len(ciudades)}")
-
-    for i, u in enumerate(ciudades[:250]):
-        if not queda_tiempo():
-            log(f"  tope de {TOPE_MINUTOS} min alcanzado: se corta en la ciudad {i} "
-                f"de {len(ciudades[:250])} y se publica lo recogido")
-            break
-        filas, diag = pi_ciudad(u, comb, muestra=(i == 0))
-        nuevas = sum(1 for e in filas if guarda(e))
-        if i % 25 == 0 or nuevas:
-            log(f"  {u} -> {len(filas)} filas, {nuevas} nuevas (total {len(todo)})")
-
-    viejos = sum(1 for e in todo if e.get("viejo", {}).get(comb))
-    log(f"  {etiqueta} {pais}: {len(todo)} con precio ({viejos} marcadas como no actuales)")
-    return todo
-
-
-CADENAS = [
-    {"marca": "Prijzenindex", "pais": "BE/NL", "base": PI_BASE, "fn": prijzenindex},
-    {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
-    {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
-    {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
-    {"marca": "Octa+",     "pais": "BE", "base": "https://www.octaplus.be"},
-    {"marca": "Tango",   "pais": "NL", "base": "https://www.tango.nl"},
-    {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl",
-     "fn": lambda c: por_fichas(c["base"], c["base"] + "/tankstations", c["marca"], c["pais"])},
-    {"marca": "Gulf",    "pais": "NL", "base": "https://www.gulf.nl"},
-    {"marca": "Kreuze",  "pais": "NL", "base": "https://www.kreuze.nl"},
-    {"marca": "Firezone",  "pais": "NL", "base": "https://www.firezone.nl"},
-    {"marca": "Fieten",    "pais": "NL", "base": "https://www.fietenolie.nl"},
-    {"marca": "SuperTank", "pais": "NL", "base": "https://www.supertank.nl"},
-    {"marca": "Berkman",   "pais": "NL", "base": "https://www.berkman.nl"},
-    {"marca": "OK",        "pais": "NL", "base": "https://www.ok.nl"},
-]
+    log(f"  ciudades en el listado: {len(ciudades)}")
+    return fuera, ciudades
 
 
 def procesar(c):
@@ -890,39 +944,76 @@ def descubrir_marcas():
 # porque la misma estacion aparece una vez por carburante y cada aparicion
 # trae un precio distinto que hay que conservar.
 # ---------------------------------------------------------------------------
-def fusiona(todas, hoy):
+def fusiona(todas, hoy, previo=None):
+    """
+    Funde lo recogido hoy con lo que ya habia publicado. Cada precio lleva su
+    propia fecha en "pdate": asi una estacion puede tener el gasoleo de hoy y
+    la gasolina de la semana pasada, y el mapa puede decir de cuando es cada
+    cosa en vez de fingir que todo es de esta manana.
+    """
     fusion, orden = {}, []
+
+    def clave(e):
+        return (round(e["lat"], 4), round(e["lon"], 4))
+
+    # Lo anterior entra primero, para que lo de hoy lo pise
+    for k, e in (previo or {}).items():
+        fusion[k] = e
+        orden.append(k)
+
     for e in todas:
-        k = (round(e["lat"], 4), round(e["lon"], 4))
+        k = clave(e)
         base = fusion.get(k)
         if base is None:
+            e["pdate"] = {c: hoy for c in e["prices"]}
             fusion[k] = e
             orden.append(k)
             continue
+        base.setdefault("prices", {})
+        base.setdefault("pdate", {})
+        base.setdefault("viejo", {})
         for comb, p in e["prices"].items():
-            if comb not in base["prices"]:
-                base["prices"][comb] = p
-                base["viejo"][comb] = e["viejo"].get(comb, False)
-        # Un nombre real gana al generico, venga de la pasada que venga
+            base["prices"][comb] = p                       # lo de hoy manda
+            base["pdate"][comb] = hoy
+            base["viejo"][comb] = e.get("viejo", {}).get(comb, False)
         if base.get("name", "") in ("", "Gasolinera") and e.get("name"):
             base["name"] = e["name"]
             base["brand"] = e.get("brand") or e["name"]
         if not base.get("city") and e.get("city"):
             base["city"] = e["city"]
+        base["country"] = e.get("country") or base.get("country")
+        base["source"] = e.get("source") or base.get("source")
 
-    limpias = []
+    # Se tiran los precios caducados, y la estacion entera si no le queda ninguno
+    corte = (datetime.now(timezone.utc) - timedelta(days=CADUCA)).strftime("%Y-%m-%d")
+    limpias, caducados, muertas = [], 0, 0
     for k in orden:
         e = fusion[k]
-        e["date"] = hoy
+        for comb in list(e.get("prices", {})):
+            if e.get("pdate", {}).get(comb, "") < corte:
+                del e["prices"][comb]
+                e["pdate"].pop(comb, None)
+                e.get("viejo", {}).pop(comb, None)
+                caducados += 1
+        if not e.get("prices"):
+            muertas += 1
+            continue
+        e["date"] = max(e["pdate"].values()) if e.get("pdate") else hoy
         e["price"] = e["prices"].get("diesel")
         e["id"] = "%s-%.5f-%.5f" % (str(e.get("brand") or "estacion").lower().replace(" ", ""),
                                     e["lat"], e["lon"])
         limpias.append(e)
+    if caducados or muertas:
+        log(f"  caducados (mas de {CADUCA} dias): {caducados} precios, "
+            f"{muertas} estaciones se quedan sin ninguno")
     return limpias
 
 
 def main():
+    global CURSOR
     hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    log("=== ARRANQUE " + hoy + " ===")
+    previo, CURSOR = carga_previo()
     descubrir_marcas()
     todas = []
     for c in CADENAS:
@@ -931,7 +1022,7 @@ def main():
         except Exception as e:
             log(f"  ERROR inesperado en {c['marca']}: {type(e).__name__}: {e}")
 
-    limpias = fusiona(todas, hoy)
+    limpias = fusiona(todas, hoy, previo)
 
     doc = {
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -940,6 +1031,7 @@ def main():
                   if any(c in e["prices"] for e in limpias)],
         "labels": {c: ETIQUETA[c] for c in COMBUSTIBLES},
         "note": "Precios recogidos de las webs de cada cadena. Pueden diferir del surtidor.",
+        "cursor": CURSOR,
         "stations": limpias,
     }
     with open(SALIDA, "w", encoding="utf-8") as f:
@@ -957,6 +1049,9 @@ def main():
             log(f"  {ETIQUETA[comb]:<16} {n}")
     multi = sum(1 for e in limpias if len(e["prices"]) > 1)
     log(f"Estaciones con mas de un carburante: {multi}")
+    frescas = sum(1 for e in limpias if e.get("date") == hoy)
+    log(f"Actualizadas hoy: {frescas} · arrastradas de pasadas anteriores: {len(limpias)-frescas}")
+    log(f"Cursor para la proxima pasada: {CURSOR}")
     return 0        # nunca falla: el archivo se escribe siempre
 
 
