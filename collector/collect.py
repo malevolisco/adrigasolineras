@@ -813,6 +813,25 @@ def pi_indice(comb, pais, raiz):
     return fuera, ciudades
 
 
+CADENAS = [
+    {"marca": "Prijzenindex", "pais": "BE/NL", "base": PI_BASE, "fn": prijzenindex},
+    {"marca": "DATS 24", "pais": "BE", "base": "https://dats24.be", "fn": dats24},
+    {"marca": "Maes",     "pais": "BE", "base": "https://www.maes.be"},
+    {"marca": "Gabriels",  "pais": "BE", "base": "https://www.gabriels.be"},
+    {"marca": "Octa+",     "pais": "BE", "base": "https://www.octaplus.be"},
+    {"marca": "Tango",   "pais": "NL", "base": "https://www.tango.nl"},
+    {"marca": "TinQ",    "pais": "NL", "base": "https://www.tinq.nl",
+     "fn": lambda c: por_fichas(c["base"], c["base"] + "/tankstations", c["marca"], c["pais"])},
+    {"marca": "Gulf",    "pais": "NL", "base": "https://www.gulf.nl"},
+    {"marca": "Kreuze",  "pais": "NL", "base": "https://www.kreuze.nl"},
+    {"marca": "Firezone",  "pais": "NL", "base": "https://www.firezone.nl"},
+    {"marca": "Fieten",    "pais": "NL", "base": "https://www.fietenolie.nl"},
+    {"marca": "SuperTank", "pais": "NL", "base": "https://www.supertank.nl"},
+    {"marca": "Berkman",   "pais": "NL", "base": "https://www.berkman.nl"},
+    {"marca": "OK",        "pais": "NL", "base": "https://www.ok.nl"},
+]
+
+
 def procesar(c):
     marca, pais, base = c["marca"], c["pais"], c["base"]
     log(f"\n--- {marca} ({pais}) ---")
@@ -981,8 +1000,10 @@ def fusiona(todas, hoy, previo=None):
             base["brand"] = e.get("brand") or e["name"]
         if not base.get("city") and e.get("city"):
             base["city"] = e["city"]
-        base["country"] = e.get("country") or base.get("country")
-        base["source"] = e.get("source") or base.get("source")
+        # El pais NO se pisa: una estacion no cambia de pais segun el orden en
+        # que se raspe, y en la franja fronteriza eso daria tumbos.
+        base["country"] = base.get("country") or e.get("country")
+        base["source"] = base.get("source") or e.get("source")
 
     # Se tiran los precios caducados, y la estacion entera si no le queda ninguno
     corte = (datetime.now(timezone.utc) - timedelta(days=CADUCA)).strftime("%Y-%m-%d")
