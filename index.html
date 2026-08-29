@@ -225,13 +225,25 @@ h3:first-child{margin-top:0}
 .dot.alto{box-shadow:0 0 0 2.5px var(--coral),0 1px 5px rgba(0,0,0,.5)}
 .dot.top{box-shadow:0 0 0 3px var(--verde),0 0 14px rgba(61,214,140,.8),0 1px 5px rgba(0,0,0,.5)}
 .dot.stop{width:23px;height:23px;transform:translate(-11.5px,-11.5px);border:3px solid var(--ambar)}
-/* Cuadrado = punto de carga. El tamaño y el anillo codifican la potencia:
-   cuanto más grande y más marcado, más rápido carga. */
-.ev{width:13px;height:13px;border-radius:3px;background:var(--verde);border:2px solid #fff;
-  transform:translate(-6.5px,-6.5px);box-shadow:0 1px 4px rgba(0,0,0,.5)}
-.ev.rapida{width:16px;height:16px;transform:translate(-8px,-8px)}
-.ev.ultra{width:20px;height:20px;transform:translate(-10px,-10px);border-width:3px;
-  box-shadow:0 0 0 2px var(--verde),0 1px 6px rgba(0,0,0,.5)}
+/* Chapa con rayo = punto de carga. El cuadradito verde de antes se perdía
+   sobre el mapa claro y se confundía con los puntos de gasolinera. El tamaño
+   codifica la potencia: normal hasta 50 kW, mayor hasta 150, grande y con
+   halo por encima. El borde oscuro es lo que lo hace legible sobre cualquier
+   fondo del mapa. */
+.ev{width:24px;height:24px;border-radius:7px;border:2px solid var(--asfalto);
+  display:grid;place-items:center;transform:translate(-12px,-12px);
+  box-shadow:0 2px 7px rgba(4,18,23,.5)}
+.ev svg{width:12px;height:12px;fill:#fff;display:block}
+.ev.claro svg{fill:var(--asfalto)}
+.ev.rapida{width:28px;height:28px;border-radius:8px;transform:translate(-14px,-14px)}
+.ev.rapida svg{width:14px;height:14px}
+.ev.ultra{width:33px;height:33px;border-radius:10px;transform:translate(-16.5px,-16.5px);
+  border-width:3px;box-shadow:0 0 0 3px rgba(61,214,140,.5),0 2px 9px rgba(4,18,23,.55)}
+.ev.ultra svg{width:17px;height:17px}
+.ev-kw{position:absolute;left:50%;top:-11px;transform:translateX(-50%);
+  background:var(--asfalto);color:var(--senal);border:1px solid var(--linea);
+  border-radius:5px;padding:.02rem .28rem;font-family:"Azeret Mono",monospace;
+  font-size:.58rem;font-weight:800;white-space:nowrap}
 .grp{width:30px;height:30px;border-radius:50%;background:rgba(18,56,69,.95);border:2px solid #fff;
   color:#fff;display:grid;place-items:center;font-family:"Azeret Mono",monospace;font-size:.7rem;
   font-weight:800;transform:translate(-15px,-15px);box-shadow:0 2px 7px rgba(0,0,0,.45)}
@@ -905,13 +917,14 @@ h3:first-child{margin-top:0}
     });
   }
   function caja(b){ return {s:b.getSouth(),w:b.getWest(),n:b.getNorth(),e:b.getEast()}; }
-  function inLoaded(c){
-    for(var i=0;i<loaded.length;i++){
-      var l=loaded[i];
+  function dentroDe(lista,c){
+    for(var i=0;i<lista.length;i++){
+      var l=lista[i];
       if(c.s>=l.s&&c.n<=l.n&&c.w>=l.w&&c.e<=l.e) return true;
     }
     return false;
   }
+  function inLoaded(c){ return dentroDe(loaded,c); }
   /* ---- Barrido de OpenStreetMap en cuadrícula ------------------------------
      Overpass corta la respuesta al llegar al tope, y una sola consulta sobre el
      Randstad o el eje Amberes-Eindhoven lo revienta sin despeinarse: por eso
@@ -986,6 +999,18 @@ h3:first-child{margin-top:0}
   }
   function render(){
     pinLayer.clearLayers(); markers={};
+    // Los puntos de carga se pintan aparte, pero TODO lo demás sigue vivo: el
+    // tótem se actualiza, las pestañas se recalculan y al volver a un
+    // carburante las gasolineras ya están cargadas. Antes este modo cortaba en
+    // seco el resto de la aplicación y por eso el tótem se quedaba clavado en
+    // el último país visitado.
+    if(FUEL==="ev"){
+      MED=null;
+      fuelsDisponibles(visible());
+      evRender();
+      totem();
+      return;
+    }
     var z=map.getZoom(), vis=visible();
     var conPrecio=vis.filter(function(s){ return s.real&&precioDe(s); })
                      .sort(function(a,b){ return precioDe(a)-precioDe(b); });
@@ -1122,10 +1147,10 @@ h3:first-child{margin-top:0}
   }
 
   map.on("moveend zoomend",function(){
-    if(FUEL==="ev"){ clearTimeout(timer); timer=setTimeout(evLoad,600); return; }
     render();
     clearTimeout(timer);
     timer=setTimeout(function(){
+      if(FUEL==="ev"){ evLoad(); return; }
       var b=map.getBounds();
       if(box(b,ES_BOX)&&esState<2) esLoad();
       if(box(b,FR_BOX)&&map.getZoom()>=9) frLoad(b.pad(.15));
@@ -1353,6 +1378,13 @@ h3:first-child{margin-top:0}
   ];
   var RED_OTRA={nombre:"Otras redes",color:"#7FB3AE"};
 
+  // Fastned, Vattenfall o Shell son amarillos: un rayo blanco encima no se ve.
+  function esClaro(hex){
+    var h=String(hex).replace("#","");
+    var r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
+    return (0.299*r+0.587*g+0.114*b)>165;
+  }
+
   function redDe(txt){
     var t=String(txt||"").toLowerCase();
     for(var i=0;i<REDES.length;i++){
@@ -1434,11 +1466,12 @@ h3:first-child{margin-top:0}
   function evRender(){
     evLayer.clearLayers();
     var vis=evVisibles();
+    var RAYO='<svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
     vis.forEach(function(e){
       var rapida=e.kw!=null&&e.kw>=150;
       var media=e.kw!=null&&e.kw>=50&&e.kw<150;
-      var cls="ev"+(rapida?" ultra":(media?" rapida":""));
-      var etiqueta=e.kw!=null?('<span class="tag"><em>'+e.kw+' kW</em></span>'):"";
+      var cls="ev"+(rapida?" ultra":(media?" rapida":""))+(esClaro(e.red.color)?" claro":"");
+      var etiqueta=e.kw!=null?('<span class="ev-kw">'+e.kw+" kW</span>"):"";
       var det=[];
       if(e.kw!=null) det.push("<i>Hasta "+e.kw+" kW</i>");
       if(e.tomas.length) det.push("<i>"+esc(e.tomas.join(" · "))+"</i>");
@@ -1449,44 +1482,35 @@ h3:first-child{margin-top:0}
         det.push("<i>Acceso: "+esc(e.acceso)+"</i>");
       L.marker([e.lat,e.lon],{icon:L.divIcon({className:"",iconSize:null,
         html:'<div style="position:relative"><div class="'+cls+'" style="background:'+
-             e.red.color+'"></div>'+(map.getZoom()>=13?etiqueta:"")+"</div>"})})
+             e.red.color+'">'+RAYO+"</div>"+(map.getZoom()>=13?etiqueta:"")+"</div>"})})
         .bindPopup('<div class="pop"><div class="pop-h" style="background:'+e.red.color+'">'+
           esc(e.red.nombre)+"</div><b>"+esc(e.nombre)+"</b>"+det.join("")+
           '<div class="pop-b"><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+
           e.lat+","+e.lon+'">Cómo llegar</a></div></div>').addTo(evLayer);
     });
-    evChips(vis);
-    say(vis.length+" puntos de carga a la vista"+(evRed?" de "+evRed:""));
+    evChips();
+    if(vis.length) say(vis.length+" puntos de carga a la vista"+(evRed?" · "+evRed:""));
     return vis.length;
   }
 
-  // Las mismas pastillas de marca, pero con las redes de recarga
-  function evChips(vis){
-    var c={},orden=[];
-    vis.forEach(function(e){
+  // Las mismas pastillas de marca, pero con las redes de recarga. Se cuentan
+  // siempre sobre TODO lo que hay en pantalla, no sobre lo filtrado: si no, al
+  // elegir una red desaparecerían las demás pastillas y no habría forma de
+  // volver sin recargar.
+  function evChips(){
+    var b=map.getBounds(),c={},orden=[],id;
+    for(id in evStore){
+      var e=evStore[id];
+      if(!b.contains([e.lat,e.lon])) continue;
       if(!c[e.red.key]){ c[e.red.key]={n:0,r:e.red}; orden.push(e.red.key); }
       c[e.red.key].n++;
-    });
-    // hay que contar sobre todo lo cargado, no solo lo filtrado, o al filtrar
-    // desaparecerían las demás pastillas y no habría cómo volver
-    if(evRed){
-      var b=map.getBounds(),id;
-      for(id in evStore){
-        var e=evStore[id];
-        if(!b.contains([e.lat,e.lon])||c[e.red.key]) continue;
-        c[e.red.key]={n:0,r:e.red}; orden.push(e.red.key);
-      }
-      for(id in evStore){
-        var e2=evStore[id];
-        if(b.contains([e2.lat,e2.lon])&&e2.red.key!==evRed) c[e2.red.key].n++;
-      }
     }
-    orden.sort(function(a,b2){ return c[b2].n-c[a].n; });
+    orden.sort(function(x,y){ return c[y].n-c[x].n; });
     var host=$("chips"); host.innerHTML="";
     function mk(t,on,fn){
-      var b=document.createElement("button");
-      b.textContent=t; b.setAttribute("aria-pressed",on?"true":"false"); b.onclick=fn;
-      host.appendChild(b);
+      var x=document.createElement("button");
+      x.textContent=t; x.setAttribute("aria-pressed",on?"true":"false"); x.onclick=fn;
+      host.appendChild(x);
     }
     mk("Todas",!evRed,function(){ evRed=null; evRender(); });
     orden.slice(0,12).forEach(function(k){
@@ -1496,20 +1520,44 @@ h3:first-child{margin-top:0}
     });
   }
 
+  var evLoaded=[], evBusy=false;
+
   function evLoad(){
-    if(map.getZoom()<10){ say("Acércate para ver los puntos de carga"); evLayer.clearLayers(); return; }
+    if(map.getZoom()<10){
+      // Ojo: NO se borra la capa. Alejarse un poco no puede hacer desaparecer
+      // de golpe lo que ya estaba pintado; era lo que pasaba antes.
+      say("Acércate para buscar más puntos de carga");
+      return;
+    }
     var c=caja(map.getBounds().pad(.15));
+    if(evBusy) return;
+    if(dentroDe(evLoaded,c)){ evRender(); return; }   // esta zona ya se pidió
+    evBusy=true;
     say("Buscando puntos de carga…");
     var bb=c.s.toFixed(4)+","+c.w.toFixed(4)+","+c.n.toFixed(4)+","+c.e.toFixed(4);
+    var fallo=false, tope=false;
     var tareas=[
       overpass('[out:json][timeout:25];nwr["amenity"="charging_station"]('+bb+
                ");out center "+EV_TOPE+";")
-        .then(function(d){ evIngest(d.elements||[]); })
+        .then(function(d){
+          var els=d.elements||[];
+          if(els.length>=EV_TOPE) tope=true;
+          evIngest(els);
+        })
+        .catch(function(){ fallo=true; })
     ];
-    if(ocmKey) tareas.push(ocmLoad(c));
-    Promise.all(tareas.map(function(t){ return t.catch(function(){}); }))
-      .then(function(){ evRender(); })
-      .catch(function(){ say("No se han podido cargar los puntos de carga"); });
+    if(ocmKey) tareas.push(ocmLoad(c).catch(function(){}));
+    Promise.all(tareas).then(function(){
+      evBusy=false;
+      if(!fallo&&!tope){
+        evLoaded.push(c);
+        if(evLoaded.length>200) evLoaded.shift();
+      }
+      var n=evRender();
+      if(fallo) say("No se han podido cargar los puntos de carga. Overpass no responde; vuelve a mover el mapa en un minuto");
+      else if(tope) say(n+" puntos de carga · zona muy densa, acércate para verlos todos");
+      else if(!n) say("Ningún punto de carga en esta zona. OpenStreetMap no tiene ninguno registrado aquí");
+    });
   }
 
   /* Open Charge Map: registro europeo con operadores y potencias mejor curados.
@@ -1552,8 +1600,8 @@ h3:first-child{margin-top:0}
     [].forEach.call(this.children,function(x){
       x.setAttribute("aria-pressed", x===b?"true":"false");
     });
-    if(FUEL==="ev"){ pinLayer.clearLayers(); evLoad(); }
-    else{ evLayer.clearLayers(); render(); }
+    render();
+    if(FUEL==="ev") evLoad();
   });
 
   /* ---- Buscador con autocompletado (Photon, libre y sin clave) ---- */
