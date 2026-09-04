@@ -2,20 +2,30 @@ name: Precios NL y BE
 
 on:
   schedule:
-    - cron: "10 5 * * *"     # 07:10 en España (verano)
-    - cron: "10 16 * * *"    # 18:10 en España (verano)
+    - cron: "10 5 * * *"     # 05:10 UTC = 07:10 en España (verano) — respaldo
+    - cron: "10 16 * * *"    # 16:10 UTC = 18:10 en España (verano) — respaldo
   workflow_dispatch:
+    inputs:
+      origen:
+        description: "Quién lanza la ejecución"
+        required: false
+        default: "manual"
 
 permissions:
   contents: write
+  actions: read               # leer created_at / run_started_at de esta ejecución
 
 concurrency:                  # evita que dos ejecuciones se pisen
   group: precios
   cancel-in-progress: false
 
+env:
+  FRESCURA_MIN: "360"         # si los datos tienen menos de 6 h, el cron de respaldo no recolecta
+
 jobs:
   recolectar:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -23,24 +33,160 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Medir deriva de la programación
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CRON: ${{ github.event.schedule }}
+          ORIGEN: ${{ github.event.inputs.origen }}
+        run: |
+          set -euo pipefail
+          META=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                   --jq '{creado: .created_at, iniciado: .run_started_at}')
+          python3 - "$META" <<'PY'
+          import json, os, sys
+          from datetime import datetime, timedelta
+
+          meta = json.loads(sys.argv[1])
+          fmt = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
+          creado = fmt(meta["creado"])
+          iniciado = fmt(meta["iniciado"]) if meta.get("iniciado") else creado
+          cron = (os.environ.get("CRON") or "").strip()
+
+          esperado = None
+          if cron:
+              partes = cron.split()
+              esperado = creado.replace(hour=int(partes[1]), minute=int(partes[0]),
+                                        second=0, microsecond=0)
+              if esperado > creado:
+                  esperado -= timedelta(days=1)
+
+          m = lambda a, b: round((a - b).total_seconds() / 60, 1)
+          d_prog = m(creado, esperado) if esperado else ""
+          d_cola = m(iniciado, creado)
+          iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else ""
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"ESPERADO_UTC={iso(esperado)}\n")
+              f.write(f"CREADO_UTC={iso(creado)}\n")
+              f.write(f"INICIADO_UTC={iso(iniciado)}\n")
+              f.write(f"DERIVA_PROGRAMACION={d_prog}\n")
+              f.write(f"DERIVA_COLA={d_cola}\n")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("### Deriva de la ejecución\n\n")
+              f.write("| Concepto | Valor |\n|---|---|\n")
+              f.write(f"| Disparador | {os.environ['GITHUB_EVENT_NAME']} ({os.environ.get('ORIGEN') or '-'}) |\n")
+              f.write(f"| Cron | {cron or '-'} |\n")
+              f.write(f"| Programada (UTC) | {iso(esperado) or '-'} |\n")
+              f.write(f"| Creada (UTC) | {iso(creado)} |\n")
+              f.write(f"| Iniciada (UTC) | {iso(iniciado)} |\n")
+              f.write(f"| Retraso del planificador | {d_prog if d_prog != '' else '-'} min |\n")
+              f.write(f"| Espera en cola | {d_cola} min |\n")
+          PY
+
+      - name: Comprobar frescura de los datos
+        id: frescura
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+
+          limite = int(os.environ["FRESCURA_MIN"])
+          evento = os.environ["GITHUB_EVENT_NAME"]
+          saltar, edad = False, None
+          try:
+              with open("estado.json", encoding="utf-8") as f:
+                  previo = json.load(f)
+              ultimo = datetime.fromisoformat(previo["generado_utc"].replace("Z", "+00:00"))
+              edad = round((datetime.now(timezone.utc) - ultimo).total_seconds() / 60, 1)
+              saltar = (evento == "schedule" and edad < limite)
+          except (FileNotFoundError, KeyError, ValueError):
+              pass
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"saltar={'true' if saltar else 'false'}\n")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              if saltar:
+                  f.write(f"\n> Recolección omitida: los datos tienen {edad} min (límite {limite}).\n")
+              else:
+                  f.write(f"\n> Recolección ejecutada. Edad previa de los datos: "
+                          f"{edad if edad is not None else 'sin registro'} min.\n")
+          PY
+
       - name: Ejecutar el recolector
+        if: steps.frescura.outputs.saltar != 'true'
+        timeout-minutes: 15
         run: python collector/collect.py
 
-      - name: Guardar el resultado
+      - name: Escribir estado.json
+        if: steps.frescura.outputs.saltar != 'true'
+        env:
+          ORIGEN: ${{ github.event.inputs.origen }}
         run: |
-          if [ ! -f precios.json ]; then
-            echo "No se ha generado precios.json"; exit 0
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+
+          ahora = datetime.now(timezone.utc)
+          num = lambda v: float(v) if v not in (None, "") else None
+          estado = {
+              "generado_utc": ahora.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "generado_madrid": ahora.astimezone(ZoneInfo("Europe/Madrid"))
+                                      .strftime("%Y-%m-%d %H:%M:%S %Z"),
+              "disparador": os.environ["GITHUB_EVENT_NAME"],
+              "origen": os.environ.get("ORIGEN") or "",
+              "programado_utc": os.environ.get("ESPERADO_UTC") or "",
+              "deriva_programacion_min": num(os.environ.get("DERIVA_PROGRAMACION")),
+              "deriva_cola_min": num(os.environ.get("DERIVA_COLA")),
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_url": (f"{os.environ['GITHUB_SERVER_URL']}/"
+                          f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
+                          f"{os.environ['GITHUB_RUN_ID']}"),
+          }
+          with open("estado.json", "w", encoding="utf-8") as f:
+              json.dump(estado, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Registrar deriva en logs/deriva.csv
+        if: always()
+        env:
+          CRON: ${{ github.event.schedule }}
+          ORIGEN: ${{ github.event.inputs.origen }}
+          RECOLECTADO: ${{ steps.frescura.outputs.saltar != 'true' }}
+        run: |
+          set -uo pipefail
+          mkdir -p logs
+          if [ ! -f logs/deriva.csv ]; then
+            echo "creado_utc,evento,origen,cron,programado_utc,iniciado_utc,deriva_programacion_min,deriva_cola_min,recolectado,run_id" > logs/deriva.csv
           fi
+          printf '%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s\n' \
+            "${CREADO_UTC:-}" "${GITHUB_EVENT_NAME}" "${ORIGEN:-}" "${CRON:-}" \
+            "${ESPERADO_UTC:-}" "${INICIADO_UTC:-}" "${DERIVA_PROGRAMACION:-}" \
+            "${DERIVA_COLA:-}" "${RECOLECTADO:-}" "${GITHUB_RUN_ID}" >> logs/deriva.csv
+
+      - name: Guardar el resultado
+        if: always()
+        run: |
+          set -uo pipefail
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
-          git add precios.json
+          for f in precios.json estado.json logs/deriva.csv; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
           if git diff --staged --quiet; then
             echo "Sin cambios que guardar"; exit 0
           fi
           git commit -m "Precios $(date -u +%Y-%m-%d\ %H:%M) UTC"
           # Traer lo que haya subido mientras tanto y reintentar
           for i in 1 2 3; do
-            git pull --rebase --autostash origin main && git push && exit 0
+            if git pull --rebase --autostash origin main && git push; then
+              echo "Guardado"; exit 0
+            fi
             echo "Reintento $i"
             sleep 5
           done
