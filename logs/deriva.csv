@@ -1,3 +1,4 @@
 creado_utc,evento,origen,cron,programado_utc,iniciado_utc,deriva_programacion_min,deriva_cola_min,recolectado,run_id
 2026-09-04T16:10:21Z,workflow_dispatch,manual,"",,2026-09-04T16:10:21Z,,0.0,true,33893634431
 2026-09-04T18:57:49Z,schedule,,"10 16 * * *",2026-09-04T16:10:00Z,2026-09-04T18:57:49Z,167.8,0.0,true,33908658037
+2026-09-05T05:10:20Z,workflow_dispatch,manual,"",,2026-09-05T05:10:20Z,,0.0,true,33946498642
