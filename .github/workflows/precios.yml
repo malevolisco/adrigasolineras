@@ -25,7 +25,7 @@ env:
 jobs:
   recolectar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50       # el recolector tarda ~30 min; margen amplio
     steps:
       - uses: actions/checkout@v4
 
@@ -116,12 +116,13 @@ jobs:
           PY
 
       - name: Ejecutar el recolector
+        id: recolector
         if: steps.frescura.outputs.saltar != 'true'
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: python collector/collect.py
 
       - name: Escribir estado.json
-        if: steps.frescura.outputs.saltar != 'true'
+        if: steps.recolector.outcome == 'success'
         env:
           ORIGEN: ${{ github.event.inputs.origen }}
         run: |
@@ -157,7 +158,7 @@ jobs:
         env:
           CRON: ${{ github.event.schedule }}
           ORIGEN: ${{ github.event.inputs.origen }}
-          RECOLECTADO: ${{ steps.frescura.outputs.saltar != 'true' }}
+          RECOLECTADO: ${{ steps.recolector.outcome }}
         run: |
           set -uo pipefail
           mkdir -p logs
@@ -171,13 +172,22 @@ jobs:
 
       - name: Guardar el resultado
         if: always()
+        env:
+          RECOLECTOR_OK: ${{ steps.recolector.outcome }}
         run: |
           set -uo pipefail
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
-          for f in precios.json estado.json logs/deriva.csv; do
-            if [ -f "$f" ]; then git add "$f"; fi
-          done
+          # El log de deriva se guarda siempre
+          if [ -f logs/deriva.csv ]; then git add logs/deriva.csv; fi
+          # Los datos solo si la recolección terminó bien: evita subir ficheros truncados
+          if [ "${RECOLECTOR_OK}" = "success" ]; then
+            for f in precios.json estado.json; do
+              if [ -f "$f" ]; then git add "$f"; fi
+            done
+          else
+            echo "Recolección no completada (${RECOLECTOR_OK}): no se suben los datos"
+          fi
           if git diff --staged --quiet; then
             echo "Sin cambios que guardar"; exit 0
           fi
@@ -191,3 +201,4 @@ jobs:
             sleep 5
           done
           echo "No se ha podido guardar"; exit 1
+
