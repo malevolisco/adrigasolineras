@@ -135,3 +135,4 @@ creado_utc,evento,origen,cron,programado_utc,iniciado_utc,deriva_programacion_mi
 2026-10-07T16:10:20Z,workflow_dispatch,manual,"",,2026-10-07T16:10:20Z,,0.0,success,37649952860
 2026-10-07T21:14:29Z,schedule,,"10 16 * * *",2026-10-07T16:10:00Z,2026-10-07T21:14:29Z,304.5,0.0,skipped,37687978991
 2026-10-08T05:10:20Z,workflow_dispatch,manual,"",,2026-10-08T05:10:20Z,,0.0,success,37731035406
+2026-10-08T11:57:23Z,schedule,,"10 5 * * *",2026-10-08T05:10:00Z,2026-10-08T11:57:23Z,407.4,0.0,success,37773504345
