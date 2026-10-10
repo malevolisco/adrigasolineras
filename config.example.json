@@ -1,0 +1,11 @@
+{
+  "servidor_puerto": 8766,
+  "servidor_escuchar": "127.0.0.1",
+  "recoger_cada_horas": 12,
+  "recoger_al_arrancar": true,
+  "recoger_tope_minutos": 150,
+  "semilla_github": true,
+  "repo": "malevolisco/adrigasolineras",
+  "tankerkoenig_clave": "",
+  "opencharge_clave": ""
+}

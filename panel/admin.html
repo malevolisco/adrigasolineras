@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surtidor · Administración</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=Azeret+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+/* ===========================================================================
+   Mismo sistema visual que el mapa: panel de autopista. Azul gasolina de
+   fondo, blanco de señal, ámbar de dígitos. Verde, ámbar y coral siguen
+   significando bien, en curso y mal; aquí no decoran nada.
+   =========================================================================== */
+:root{
+  --asfalto:#0C2730; --panel:#123845; --panel2:#18475A; --linea:#1D5265;
+  --senal:#EDF4F2; --niebla:#85A7AF; --ambar:#FFC53D; --verde:#3DD68C; --coral:#FF7A66;
+  --r:12px; --sombra:0 10px 34px rgba(4,18,23,.55);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{font-family:"Archivo",system-ui,sans-serif;background:var(--asfalto);color:var(--senal);
+  -webkit-font-smoothing:antialiased;font-size:15px;line-height:1.45}
+.mono,code{font-family:"Azeret Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--ambar);outline-offset:2px}
+::selection{background:var(--ambar);color:var(--asfalto)}
+a{color:inherit}
+button{font:inherit;cursor:pointer}
+
+/* ---------- cabecera: franja de señal ---------- */
+header{position:sticky;top:0;z-index:5;background:rgba(12,39,48,.96);border-bottom:1px solid var(--linea);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.franja{max-width:1180px;margin:0 auto;padding:.85rem 1.2rem 0;display:flex;align-items:center;gap:.75rem}
+.mark{width:32px;height:32px;flex:0 0 32px;border-radius:8px;background:var(--ambar);display:grid;place-items:center}
+.mark svg{width:18px;height:18px;stroke:var(--asfalto);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.titulo h1{font-size:1.1rem;font-weight:800;font-variation-settings:"wdth" 118;letter-spacing:.03em;
+  text-transform:uppercase;line-height:1}
+.titulo p{font-size:.7rem;color:var(--niebla);margin-top:.2rem}
+.acciones{margin-left:auto;display:flex;gap:.45rem;align-items:center}
+.chip{font-family:"Azeret Mono",monospace;font-size:.68rem;color:var(--niebla);border:1px solid var(--linea);
+  border-radius:99px;padding:.18rem .55rem;white-space:nowrap}
+.enlace{font-size:.78rem;font-weight:700;text-decoration:none;color:var(--senal);border:1px solid var(--linea);
+  border-radius:8px;padding:.38rem .7rem;background:transparent}
+.enlace:hover{border-color:var(--ambar);color:var(--ambar)}
+nav{max-width:1180px;margin:0 auto;padding:.6rem 1.2rem 0;display:flex;gap:1.3rem;overflow-x:auto}
+nav button{background:none;border:0;color:var(--niebla);font-size:.76rem;font-weight:800;
+  font-variation-settings:"wdth" 114;text-transform:uppercase;letter-spacing:.12em;
+  padding:.2rem 0 .65rem;border-bottom:2px solid transparent;white-space:nowrap}
+nav button[aria-selected="true"]{color:var(--senal);border-bottom-color:var(--ambar)}
+
+main{max-width:1180px;margin:0 auto;padding:1.4rem 1.2rem 3rem}
+.vista{display:none}
+.vista.on{display:block}
+
+/* rótulo de sección: versales anchas con filete, como en el mapa */
+h2{display:flex;align-items:center;gap:.6rem;margin:1.8rem 0 .7rem;font-variation-settings:"wdth" 118;
+  font-weight:800;text-transform:uppercase;letter-spacing:.16em;font-size:.62rem;color:var(--niebla)}
+h2:after{content:"";flex:1;height:1px;background:var(--linea)}
+h2:first-child{margin-top:0}
+
+.caja{background:var(--panel);border:1px solid var(--linea);border-radius:var(--r)}
+.nota{font-size:.78rem;color:var(--niebla);line-height:1.55}
+
+/* ---------- la recogida: el elemento que manda en la página ---------- */
+.recogida{display:grid;grid-template-columns:1.25fr 1fr;gap:1px;background:var(--linea);
+  border:1px solid var(--linea);border-radius:var(--r);overflow:hidden}
+.recogida > div{background:var(--panel);padding:1.1rem 1.2rem}
+.semaforo{display:flex;align-items:center;gap:.6rem}
+.luz{width:12px;height:12px;border-radius:50%;background:var(--niebla);flex:0 0 12px}
+.luz.marcha{background:var(--ambar);box-shadow:0 0 0 0 rgba(255,197,61,.6);animation:latido 1.6s infinite}
+.luz.bien{background:var(--verde)}
+.luz.mal{background:var(--coral)}
+@keyframes latido{0%{box-shadow:0 0 0 0 rgba(255,197,61,.55)}70%{box-shadow:0 0 0 10px rgba(255,197,61,0)}100%{box-shadow:0 0 0 0 rgba(255,197,61,0)}}
+.estado-txt{font-size:1.3rem;font-weight:800;font-variation-settings:"wdth" 110;letter-spacing:-.01em}
+.fase{margin-top:.35rem;font-size:.85rem;color:var(--niebla);min-height:1.2em}
+.reloj{font-family:"Azeret Mono",monospace;font-weight:800;font-size:2.1rem;color:var(--ambar);
+  letter-spacing:-.04em;margin-top:.7rem;line-height:1;text-shadow:0 0 18px rgba(255,197,61,.25)}
+.reloj small{font-size:.75rem;color:var(--niebla);font-weight:600;margin-left:.2rem;letter-spacing:0}
+.botones{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:1rem}
+.btn{border:0;border-radius:9px;padding:.6rem .95rem;font-size:.8rem;font-weight:800;
+  font-variation-settings:"wdth" 110;text-transform:uppercase;letter-spacing:.07em;
+  background:var(--ambar);color:var(--asfalto)}
+.btn:hover{filter:brightness(1.07)}
+.btn.sec{background:transparent;color:var(--senal);border:1px solid var(--linea)}
+.btn.sec:hover{border-color:var(--senal)}
+.btn.peligro{background:transparent;color:var(--coral);border:1px solid rgba(255,122,102,.45)}
+.btn.peligro:hover{border-color:var(--coral)}
+.btn[disabled]{opacity:.35;cursor:not-allowed;filter:none}
+.datos dl{display:grid;grid-template-columns:auto 1fr;gap:.45rem .9rem;font-size:.84rem}
+.datos dt{color:var(--niebla)}
+.datos dd{font-size:.84rem;text-align:right;font-variant-numeric:tabular-nums}
+.res{font-family:"Archivo",sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:.72rem}
+.res.bien{color:var(--verde)} .res.error,.res.vacia{color:var(--coral)} .res.parada{color:var(--ambar)}
+
+/* ---------- cifras ---------- */
+.cifras{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem}
+.cifra{background:var(--panel);border:1px solid var(--linea);border-radius:var(--r);padding:.85rem .95rem}
+.cifra b{display:block;font-family:"Azeret Mono",monospace;font-size:1.55rem;font-weight:800;letter-spacing:-.04em}
+.cifra span{display:block;font-variation-settings:"wdth" 116;font-weight:700;font-size:.58rem;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--niebla);margin-top:.25rem}
+.cifra i{display:block;font-style:normal;font-size:.72rem;color:var(--niebla);margin-top:.35rem}
+
+/* ---------- tablas ---------- */
+table{width:100%;border-collapse:collapse;font-size:.84rem}
+th{text-align:left;font-variation-settings:"wdth" 116;font-weight:800;font-size:.58rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--niebla);padding:.65rem .8rem;border-bottom:1px solid var(--linea)}
+td{padding:.55rem .8rem;border-bottom:1px solid rgba(29,82,101,.55)}
+tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;font-family:"Azeret Mono",monospace;font-variant-numeric:tabular-nums}
+td.cero{color:rgba(133,167,175,.45)}
+.tabla{overflow-x:auto}
+
+/* ---------- registro ---------- */
+.barra-reg{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-bottom:.6rem}
+.filtro{background:transparent;border:1px solid var(--linea);color:var(--niebla);border-radius:99px;
+  padding:.28rem .7rem;font-size:.74rem;font-weight:600}
+.filtro[aria-pressed="true"]{background:var(--senal);border-color:var(--senal);color:var(--asfalto);font-weight:800}
+.consola{background:#081c23;border:1px solid var(--linea);border-radius:var(--r);height:min(64vh,640px);
+  overflow:auto;padding:.7rem .9rem;font:12px/1.65 "Azeret Mono",ui-monospace,monospace;color:#b9cdd1}
+.consola div{white-space:pre-wrap;word-break:break-word}
+.consola .t{color:#5e8590;margin-right:.6rem}
+.consola .o{color:#6fa3ad;margin-right:.6rem}
+.consola .aviso{color:var(--ambar)}
+.consola .error{color:var(--coral)}
+
+/* ---------- formularios ---------- */
+.grupo{padding:1.1rem 1.2rem}
+.grupo + .grupo{border-top:1px solid var(--linea)}
+.grupo h3{font-size:.95rem;font-weight:800;margin-bottom:.2rem}
+.grupo > p{font-size:.78rem;color:var(--niebla);margin-bottom:.9rem;max-width:62ch}
+.campos{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.8rem 1rem}
+label.campo span{display:block;font-variation-settings:"wdth" 116;font-weight:800;font-size:.58rem;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--niebla);margin-bottom:.3rem}
+label.campo small{display:block;font-size:.7rem;color:var(--niebla);margin-top:.3rem;line-height:1.4}
+input[type=text],input[type=number],input[type=password],select{width:100%;height:40px;background:var(--asfalto);
+  border:1px solid var(--linea);border-radius:8px;color:var(--senal);font:inherit;font-size:.88rem;padding:0 .7rem}
+input[type=number]{font-family:"Azeret Mono",monospace}
+input:focus,select:focus{outline:none;border-color:var(--ambar)}
+.secreto{display:flex;gap:.35rem}
+.secreto .btn{padding:.45rem .6rem;white-space:nowrap}
+.interruptor{display:flex;gap:.6rem;align-items:flex-start;font-size:.84rem;cursor:pointer;padding-top:.2rem}
+.interruptor input{accent-color:var(--ambar);width:17px;height:17px;margin-top:.1rem;flex:0 0 auto}
+.pie-form{display:flex;align-items:center;gap:.8rem;padding:1rem 1.2rem;border-top:1px solid var(--linea)}
+
+/* ---------- sistema ---------- */
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+.ok{color:var(--verde);font-weight:800}
+.ko{color:var(--coral);font-weight:800}
+
+/* ---------- aviso flotante ---------- */
+#aviso{position:fixed;left:50%;bottom:1.4rem;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  background:var(--senal);color:var(--asfalto);font-weight:700;font-size:.86rem;padding:.65rem 1rem;
+  border-radius:10px;box-shadow:var(--sombra);transition:opacity .18s,transform .18s;max-width:min(560px,90vw)}
+#aviso.on{opacity:1;transform:translate(-50%,0)}
+#aviso.mal{background:var(--coral);color:#250a05}
+
+/* ---------- entrada ---------- */
+#entrada{min-height:100vh;display:none;place-items:center;padding:1.2rem}
+#entrada.on{display:grid}
+#entrada form{width:min(380px,100%);background:var(--panel);border:1px solid var(--linea);border-radius:16px;
+  padding:1.5rem;box-shadow:var(--sombra)}
+#entrada .mark{margin-bottom:1rem}
+#entrada h1{font-size:1.15rem;font-weight:800;font-variation-settings:"wdth" 118;text-transform:uppercase;letter-spacing:.03em}
+#entrada p{font-size:.8rem;color:var(--niebla);margin:.35rem 0 1.1rem}
+#entrada .btn{width:100%;margin-top:.8rem;padding:.75rem}
+#entrada-error{color:var(--coral);font-size:.8rem;min-height:1.2em;margin-top:.6rem}
+#app{display:none}
+#app.on{display:block}
+
+@media (max-width:860px){
+  .recogida{grid-template-columns:1fr}
+  .cifras{grid-template-columns:repeat(2,1fr)}
+  .dos{grid-template-columns:1fr}
+  .franja{flex-wrap:wrap}
+  .acciones{margin-left:0;width:100%}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="surtidor" viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 21h12"/><path d="M7 8h4"/><path d="M17 10v7a2 2 0 0 0 4 0V9l-3-3"/></symbol>
+</svg>
+
+<!-- ======================= entrada con clave ======================= -->
+<section id="entrada">
+  <form id="f-entrada">
+    <div class="mark"><svg><use href="#surtidor"/></svg></div>
+    <h1>Administración</h1>
+    <p>Desde la ventana de Surtidor se entra solo. En un navegador, escribe la clave del panel.</p>
+    <label class="campo"><span>Clave</span><input type="password" id="clave" autocomplete="current-password" autofocus></label>
+    <button class="btn" type="submit">Entrar</button>
+    <div id="entrada-error"></div>
+  </form>
+</section>
+
+<!-- ======================= el panel ======================= -->
+<div id="app">
+<header>
+  <div class="franja">
+    <div class="mark"><svg><use href="#surtidor"/></svg></div>
+    <div class="titulo"><h1>Surtidor</h1><p>Administración</p></div>
+    <div class="acciones">
+      <span class="chip" id="chip-version">—</span>
+      <a class="enlace" href="/">Ver el mapa</a>
+      <button class="enlace" id="b-salir" type="button">Salir</button>
+    </div>
+  </div>
+  <nav role="tablist">
+    <button role="tab" data-v="estado" aria-selected="true">Estado</button>
+    <button role="tab" data-v="registro" aria-selected="false">Registro</button>
+    <button role="tab" data-v="ajustes" aria-selected="false">Ajustes</button>
+    <button role="tab" data-v="sistema" aria-selected="false">Sistema</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ---------------- ESTADO ---------------- -->
+  <section class="vista on" id="v-estado">
+    <h2>Recogida de precios</h2>
+    <div class="recogida">
+      <div>
+        <div class="semaforo"><span class="luz" id="luz"></span><span class="estado-txt" id="estado-txt">—</span></div>
+        <div class="fase" id="fase"></div>
+        <div class="reloj" id="reloj">—</div>
+        <div class="botones">
+          <button class="btn" id="b-recoger" type="button">Recoger ahora</button>
+          <button class="btn peligro" id="b-parar" type="button" hidden>Parar</button>
+          <button class="btn sec" id="b-github" type="button">Traer del repositorio</button>
+          <button class="btn sec" id="b-deshacer" type="button">Deshacer la última</button>
+        </div>
+      </div>
+      <div class="datos">
+        <dl>
+          <dt>Última pasada</dt><dd id="d-ultima">—</dd>
+          <dt>Resultado</dt><dd id="d-resultado">—</dd>
+          <dt>Duró</dt><dd id="d-duro">—</dd>
+          <dt>Próxima</dt><dd id="d-proxima">—</dd>
+          <dt>Frecuencia</dt><dd id="d-cada">—</dd>
+        </dl>
+      </div>
+    </div>
+
+    <h2>Lo que hay recogido</h2>
+    <div class="cifras">
+      <div class="cifra"><b id="c-estaciones">—</b><span>Estaciones con precio</span><i>Países Bajos y Bélgica</i></div>
+      <div class="cifra"><b id="c-hoy">—</b><span>Actualizadas</span><i id="c-hoy-dia">en la última pasada</i></div>
+      <div class="cifra"><b id="c-edad">—</b><span>Edad de los datos</span><i id="c-edad-de">—</i></div>
+      <div class="cifra"><b id="c-comb">—</b><span>Carburantes</span><i id="c-comb-cuales">—</i></div>
+    </div>
+
+    <h2>Por país y carburante</h2>
+    <div class="caja tabla"><table id="t-cruce"></table></div>
+    <p class="nota" style="margin-top:.6rem">España y Francia no aparecen aquí: sus precios oficiales los pide el mapa
+      en directo a cada ministerio, no los recoge este programa.</p>
+
+    <h2>Pasadas anteriores</h2>
+    <div class="caja tabla"><table id="t-historial"></table></div>
+  </section>
+
+  <!-- ---------------- REGISTRO ---------------- -->
+  <section class="vista" id="v-registro">
+    <div class="barra-reg">
+      <button class="filtro" data-f="todo" aria-pressed="true" type="button">Todo</button>
+      <button class="filtro" data-f="recolector" aria-pressed="false" type="button">Solo recolector</button>
+      <button class="filtro" data-f="problemas" aria-pressed="false" type="button">Avisos y errores</button>
+      <label class="interruptor" style="margin-left:auto"><input type="checkbox" id="seguir" checked> Seguir el final</label>
+    </div>
+    <div class="consola" id="consola" aria-live="off"></div>
+  </section>
+
+  <!-- ---------------- AJUSTES ---------------- -->
+  <section class="vista" id="v-ajustes">
+    <form class="caja" id="f-ajustes">
+      <div class="grupo">
+        <h3>Recogida</h3>
+        <p>Cada cuánto barre este PC Prijzenindex y las cadenas de Países Bajos y Bélgica. Cada pasada amplía lo
+          recogido en vez de empezar de cero; los precios de más de 21 días se descartan solos.</p>
+        <div class="campos">
+          <label class="campo"><span>Cada cuántas horas</span><input type="number" name="recoger_cada_horas" min="0" max="168" step="1">
+            <small>0 = solo cuando pulses «Recoger ahora».</small></label>
+          <label class="campo"><span>Tiempo máximo por pasada (min)</span><input type="number" name="recoger_tope_minutos" min="5" max="600" step="5">
+            <small>Al llegar, deja de barrer ciudades y guarda lo que tenga.</small></label>
+          <label class="interruptor"><input type="checkbox" name="recoger_al_arrancar">
+            <span>Recoger al abrir el programa si los datos son más viejos que la frecuencia</span></label>
+          <label class="interruptor"><input type="checkbox" name="semilla_github">
+            <span>Al abrir, traer del repositorio lo recogido por GitHub si es más nuevo que lo de este PC</span></label>
+        </div>
+      </div>
+      <div class="grupo">
+        <h3>Claves de fuentes</h3>
+        <p>Se guardan solo en este PC, nunca en el repositorio. El mapa las usa sin tener que ponerlas en la dirección.
+          Para cambiar una, escríbela encima; dejar el campo vacío la mantiene.</p>
+        <div class="campos">
+          <label class="campo"><span>Tankerkönig (precios de Alemania)</span>
+            <div class="secreto"><input type="password" name="tankerkoenig_clave" autocomplete="off">
+              <button class="btn peligro" type="button" data-borrar="tankerkoenig_clave">Quitar</button></div>
+            <small>Gratis en creativecommons.tankerkoenig.de, botón API-KEY.</small></label>
+          <label class="campo"><span>Open Charge Map (puntos de carga)</span>
+            <div class="secreto"><input type="password" name="opencharge_clave" autocomplete="off">
+              <button class="btn peligro" type="button" data-borrar="opencharge_clave">Quitar</button></div>
+            <small>Gratis en openchargemap.org, en tu perfil.</small></label>
+        </div>
+      </div>
+      <div class="grupo">
+        <h3>Servidor</h3>
+        <p>Cambiar cualquiera de estos dos obliga a reiniciar el servidor.</p>
+        <div class="campos">
+          <label class="campo"><span>Puerto</span><input type="number" name="servidor_puerto" min="1024" max="65535">
+            <small>8766 por defecto; el Catalogator usa el 8765.</small></label>
+          <label class="campo"><span>Quién puede abrirlo</span>
+            <select name="servidor_escuchar">
+              <option value="127.0.0.1">Solo este PC</option>
+              <option value="0.0.0.0">Cualquier equipo de la red de casa</option>
+            </select>
+            <small>Desde otros equipos el mapa se ve sin tus claves.</small></label>
+          <label class="campo"><span>Repositorio</span><input type="text" name="repo" spellcheck="false">
+            <small>De dónde se traen los precios de GitHub.</small></label>
+        </div>
+      </div>
+      <div class="pie-form">
+        <button class="btn" type="submit">Guardar ajustes</button>
+        <span class="nota" id="ajustes-nota"></span>
+      </div>
+    </form>
+
+    <h2>Clave del panel</h2>
+    <div class="caja grupo">
+      <p>Hace falta solo para entrar desde un navegador o desde otro equipo. La ventana de Surtidor entra sin ella.</p>
+      <div class="campos">
+        <label class="campo"><span>Clave actual</span>
+          <div class="secreto"><input type="text" id="clave-actual" readonly placeholder="••••••••••••">
+            <button class="btn sec" type="button" id="b-ver-clave">Ver</button></div></label>
+        <label class="campo"><span>Clave nueva (12 caracteres o más)</span>
+          <div class="secreto"><input type="password" id="clave-nueva" autocomplete="new-password">
+            <button class="btn sec" type="button" id="b-cambiar-clave">Cambiar</button></div></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------- SISTEMA ---------------- -->
+  <section class="vista" id="v-sistema">
+    <div class="dos">
+      <div class="caja grupo">
+        <h3>Programa</h3>
+        <div class="datos" style="margin-top:.7rem"><dl>
+          <dt>Versión de la app</dt><dd id="s-version">—</dd>
+          <dt>Lanzador</dt><dd id="s-lanzador">—</dd>
+          <dt>Carpeta</dt><dd id="s-carpeta" style="word-break:break-all">—</dd>
+        </dl></div>
+        <div class="botones">
+          <button class="btn" id="b-actualizar" type="button">Buscar actualizaciones</button>
+          <button class="btn sec" id="b-carpeta" type="button">Abrir carpeta</button>
+        </div>
+        <p class="nota" id="s-ventana-nota" style="margin-top:.7rem"></p>
+      </div>
+      <div class="caja grupo">
+        <h3>Servidor y datos</h3>
+        <p>Reiniciar corta una recogida en marcha; lo que hubiera antes de empezarla se conserva.</p>
+        <div class="botones">
+          <button class="btn sec" id="b-reiniciar" type="button">Reiniciar el servidor</button>
+          <a class="btn sec" href="/api/admin/precios.json" style="text-decoration:none">Descargar precios.json</a>
+        </div>
+      </div>
+    </div>
+
+    <h2>¿Responde cada fuente desde este PC?</h2>
+    <div class="caja tabla"><table id="t-diag"><tr><td class="nota">Pulsa «Comprobar» para medirlo.</td></tr></table></div>
+    <div class="botones"><button class="btn sec" id="b-diag" type="button">Comprobar</button></div>
+  </section>
+</main>
+</div>
+
+<div id="aviso" role="status"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){ return document.getElementById(id); };
+  var NOMBRES={diesel:"Diésel",dieselp:"Diésel+",e5:"95 E5",e5p:"95 E5+",e10:"95 E10",p98:"98",
+               p98e10:"98 E10",e85:"E85",glp:"GLP"};
+  var PAISES={NL:"Países Bajos",BE:"Bélgica",LU:"Luxemburgo",DE:"Alemania",FR:"Francia","?":"Sin país"};
+  var RESULTADO={bien:"Bien",error:"Error",vacia:"Sin datos",parada:"Parada a mano"};
+  var ORIGEN={manual:"a mano",programada:"programada"};
+  var vista="estado", ultimoReg=0, filtroReg="todo", lineasReg=[], temporizador=null;
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
+  function num(n){ return n==null?"—":Number(n).toLocaleString("es-ES"); }
+
+  // Fechas en lenguaje de a pie: "hace 3 h 20 min", "dentro de 5 h"
+  function relativo(iso){
+    if(!iso) return "—";
+    var d=new Date(iso), s=Math.round((Date.now()-d.getTime())/1000), fut=s<0;
+    s=Math.abs(s);
+    var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), txt;
+    if(s<60) txt="unos segundos";
+    else if(h===0) txt=m+" min";
+    else if(h<48) txt=h+" h"+(m?" "+m+" min":"");
+    else txt=Math.round(h/24)+" días";
+    return fut?"dentro de "+txt:"hace "+txt;
+  }
+  function horaLocal(iso){
+    if(!iso) return "";
+    return new Date(iso).toLocaleString("es-ES",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  }
+
+  function aviso(texto,mal){
+    var a=$("aviso"); a.textContent=texto; a.className="on"+(mal?" mal":"");
+    clearTimeout(aviso.t); aviso.t=setTimeout(function(){ a.className=""; },4200);
+  }
+
+  function api(ruta,opciones){
+    opciones=opciones||{};
+    var cab={"Accept":"application/json"};
+    if(opciones.body!==undefined){ cab["Content-Type"]="application/json"; opciones.body=JSON.stringify(opciones.body); }
+    opciones.headers=cab; opciones.credentials="same-origin";
+    return fetch(ruta,opciones).then(function(r){
+      if(r.status===401){ mostrarEntrada(); throw new Error("Hace falta entrar"); }
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        if(!r.ok) throw new Error(j.detail||("Error "+r.status));
+        mostrarApp();
+        return j;
+      });
+    });
+  }
+
+  /* ---------------- entrada ---------------- */
+  function mostrarEntrada(){ $("app").className=""; $("entrada").className="on"; $("clave").focus(); }
+  function mostrarApp(){ $("entrada").className=""; $("app").className="on"; }
+  $("f-entrada").addEventListener("submit",function(e){
+    e.preventDefault();
+    $("entrada-error").textContent="";
+    fetch("/api/admin/entrar",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({clave:$("clave").value})})
+      .then(function(r){
+        if(!r.ok) throw new Error("Clave incorrecta");
+        $("clave").value=""; mostrarApp(); arrancar();
+      }).catch(function(err){ $("entrada-error").textContent=err.message; });
+  });
+  $("b-salir").addEventListener("click",function(){
+    api("/api/admin/salir",{method:"POST"}).finally(function(){ location.href="/"; });
+  });
+
+  /* ---------------- pestañas ---------------- */
+  [].forEach.call(document.querySelectorAll("nav button"),function(b){
+    b.addEventListener("click",function(){ irA(b.getAttribute("data-v")); });
+  });
+  function irA(v){
+    vista=v;
+    [].forEach.call(document.querySelectorAll("nav button"),function(b){
+      b.setAttribute("aria-selected",b.getAttribute("data-v")===v?"true":"false");
+    });
+    [].forEach.call(document.querySelectorAll(".vista"),function(s){ s.classList.toggle("on",s.id==="v-"+v); });
+    try{ history.replaceState(null,"","#"+v); }catch(e){}
+    if(v==="ajustes") cargarAjustes();
+    if(v==="sistema") cargarSistema();
+    refrescar();
+  }
+
+  /* ---------------- estado ---------------- */
+  function pintarEstado(r){
+    $("chip-version").textContent="v "+(r.version||"dev");
+    var rec=r.recolector||{}, ult=r.ultima, luz=$("luz");
+    if(rec.en_marcha){
+      luz.className="luz marcha";
+      $("estado-txt").textContent="Recogiendo";
+      $("fase").textContent=(rec.fase||"Arrancando")+" · "+(ORIGEN[rec.origen]||rec.origen||"");
+      $("reloj").innerHTML=esc(rec.minutos!=null?rec.minutos.toFixed(1).replace(".",","):"0")+"<small>min</small>";
+    } else {
+      luz.className="luz"+(ult?(ult.resultado==="bien"?" bien":" mal"):"");
+      $("estado-txt").textContent="En espera";
+      $("fase").textContent=r.proxima?"Siguiente pasada "+relativo(r.proxima):"Recogida solo a mano";
+      var eh=r.datos?r.datos.edad_horas:null;
+      $("reloj").innerHTML=eh==null?"—":(eh<1?"&lt;1":esc(String(Math.round(eh))))+"<small>h de antigüedad</small>";
+    }
+    $("b-recoger").hidden=!!rec.en_marcha;
+    $("b-parar").hidden=!rec.en_marcha;
+    $("b-github").disabled=!!rec.en_marcha;
+    $("b-deshacer").disabled=!!rec.en_marcha||!r.hay_copia_anterior;
+
+    if(ult){
+      $("d-ultima").textContent=relativo(ult.fin)+" · "+(ORIGEN[ult.origen]||ult.origen);
+      $("d-ultima").title=horaLocal(ult.fin);
+      $("d-resultado").innerHTML='<span class="res '+esc(ult.resultado)+'">'+esc(RESULTADO[ult.resultado]||ult.resultado)+"</span>";
+      $("d-duro").textContent=String(ult.minutos).replace(".",",")+" min";
+    } else {
+      $("d-ultima").textContent="Ninguna todavía"; $("d-resultado").textContent="—"; $("d-duro").textContent="—";
+    }
+    $("d-proxima").textContent=r.proxima?horaLocal(r.proxima):"Solo a mano";
+    $("d-cada").textContent=r.cada_horas>0?"cada "+r.cada_horas+" h":"a mano";
+
+    var d=r.datos||{};
+    $("c-estaciones").textContent=num(d.estaciones);
+    $("c-hoy").textContent=num(d.actualizadas_ultimo_dia);
+    $("c-hoy-dia").textContent=d.ultimo_dia?"el "+new Date(d.ultimo_dia+"T12:00:00").toLocaleDateString("es-ES",{day:"numeric",month:"long"}):"en la última pasada";
+    $("c-edad").textContent=d.edad_horas==null?"—":(d.edad_horas<1?"<1 h":Math.round(d.edad_horas)+" h");
+    $("c-edad-de").textContent=d.actualizado?horaLocal(d.actualizado):"sin datos";
+    var combs=Object.keys(d.por_carburante||{});
+    $("c-comb").textContent=combs.length;
+    $("c-comb-cuales").textContent=combs.map(function(c){ return NOMBRES[c]||c; }).join(" · ")||"—";
+    pintarCruce(d);
+  }
+
+  function pintarCruce(d){
+    var paises=Object.keys(d.por_pais||{}).sort(), combs=Object.keys(d.por_carburante||{});
+    var orden=["diesel","dieselp","e5","e5p","e10","p98","p98e10","e85","glp"];
+    combs.sort(function(a,b){ return orden.indexOf(a)-orden.indexOf(b); });
+    if(!paises.length){ $("t-cruce").innerHTML='<tr><td class="nota">Todavía no hay nada recogido.</td></tr>'; return; }
+    var h="<tr><th>País</th>"+combs.map(function(c){ return '<th class="n">'+esc(NOMBRES[c]||c)+"</th>"; }).join("")+
+          '<th class="n">Estaciones</th></tr>';
+    paises.forEach(function(p){
+      h+="<tr><td>"+esc(PAISES[p]||p)+"</td>";
+      combs.forEach(function(c){
+        var n=(d.cruce||{})[p+"|"+c]||0;
+        h+='<td class="n'+(n?"":" cero")+'">'+(n?num(n):"—")+"</td>";
+      });
+      h+='<td class="n">'+num(d.por_pais[p])+"</td></tr>";
+    });
+    $("t-cruce").innerHTML=h;
+  }
+
+  function cargarHistorial(){
+    api("/api/admin/historial").then(function(j){
+      var p=j.pasadas||[];
+      if(!p.length){ $("t-historial").innerHTML='<tr><td class="nota">Aún no se ha hecho ninguna pasada desde este PC.</td></tr>'; return; }
+      var h='<tr><th>Cuándo</th><th>Cómo</th><th>Resultado</th><th class="n">Duró</th><th class="n">Estaciones</th><th class="n">Actualizadas</th></tr>';
+      p.forEach(function(x){
+        h+="<tr><td>"+esc(horaLocal(x.fin))+"</td><td>"+esc(ORIGEN[x.origen]||x.origen)+'</td><td><span class="res '+esc(x.resultado)+'">'+
+           esc(RESULTADO[x.resultado]||x.resultado)+'</span></td><td class="n">'+esc(String(x.minutos).replace(".",","))+
+           ' min</td><td class="n">'+num(x.estaciones)+'</td><td class="n">'+num(x.actualizadas)+"</td></tr>";
+      });
+      $("t-historial").innerHTML=h;
+    }).catch(function(){});
+  }
+
+  var enMarchaAntes=null;
+  function refrescar(){
+    clearTimeout(temporizador);
+    var siguiente=5000;
+    var tarea;
+    if(vista==="estado"){
+      tarea=api("/api/admin/resumen").then(function(r){
+        mostrarApp();
+        pintarEstado(r);
+        var marcha=!!(r.recolector&&r.recolector.en_marcha);
+        if(enMarchaAntes===null||marcha!==enMarchaAntes) cargarHistorial();
+        enMarchaAntes=marcha;
+        if(marcha) siguiente=2000;
+      });
+    } else if(vista==="registro"){
+      tarea=cargarRegistro(); siguiente=1500;
+    } else {
+      tarea=Promise.resolve();
+    }
+    tarea.catch(function(e){ if(e.message!=="Hace falta entrar") console.warn(e); })
+      .then(function(){ temporizador=setTimeout(refrescar,siguiente); });
+  }
+
+  $("b-recoger").addEventListener("click",function(){
+    api("/api/admin/recoger",{method:"POST"}).then(function(j){ aviso(j.texto); refrescar(); })
+      .catch(function(e){ aviso(e.message,true); });
+  });
+  $("b-parar").addEventListener("click",function(){
+    if(!confirm("¿Parar la recogida? Lo de esta pasada se pierde y se queda lo de antes de empezar.")) return;
+    api("/api/admin/recoger/parar",{method:"POST"}).then(function(j){ aviso(j.texto); refrescar(); })
+      .catch(function(e){ aviso(e.message,true); });
+  });
+  $("b-github").addEventListener("click",function(){
+    var b=$("b-github"); b.disabled=true; b.textContent="Trayendo…";
+    api("/api/admin/github",{method:"POST"}).then(function(j){ aviso(j.texto); })
+      .catch(function(e){ aviso(e.message,true); })
+      .finally(function(){ b.disabled=false; b.textContent="Traer del repositorio"; refrescar(); });
+  });
+  $("b-deshacer").addEventListener("click",function(){
+    if(!confirm("¿Volver a los precios de antes de la última pasada?")) return;
+    api("/api/admin/deshacer",{method:"POST"}).then(function(j){ aviso(j.texto); refrescar(); })
+      .catch(function(e){ aviso(e.message,true); });
+  });
+
+  /* ---------------- registro ---------------- */
+  function visibleReg(l){
+    if(filtroReg==="recolector") return l.origen==="recolector";
+    if(filtroReg==="problemas") return l.nivel!=="info";
+    return true;
+  }
+  function lineaHTML(l){
+    return '<div class="'+esc(l.nivel)+'"><span class="t">'+esc(l.t)+'</span><span class="o">'+
+           esc(l.origen==="recolector"?"recol.":"serv.")+"</span>"+esc(l.texto)+"</div>";
+  }
+  function repintarRegistro(){
+    $("consola").innerHTML=lineasReg.filter(visibleReg).map(lineaHTML).join("");
+    if($("seguir").checked) $("consola").scrollTop=$("consola").scrollHeight;
+  }
+  function cargarRegistro(){
+    return api("/api/admin/registro?desde="+ultimoReg).then(function(j){
+      var nuevas=j.lineas||[];
+      if(!nuevas.length) return;
+      ultimoReg=j.ultimo;
+      lineasReg=lineasReg.concat(nuevas).slice(-3000);
+      var c=$("consola");
+      c.insertAdjacentHTML("beforeend",nuevas.filter(visibleReg).map(lineaHTML).join(""));
+      while(c.childNodes.length>3000) c.removeChild(c.firstChild);
+      if($("seguir").checked) c.scrollTop=c.scrollHeight;
+    });
+  }
+  [].forEach.call(document.querySelectorAll(".filtro"),function(b){
+    b.addEventListener("click",function(){
+      filtroReg=b.getAttribute("data-f");
+      [].forEach.call(document.querySelectorAll(".filtro"),function(x){ x.setAttribute("aria-pressed",x===b?"true":"false"); });
+      repintarRegistro();
+    });
+  });
+
+  /* ---------------- ajustes ---------------- */
+  var SECRETOS=["tankerkoenig_clave","opencharge_clave"];
+  function cargarAjustes(){
+    api("/api/admin/ajustes").then(function(a){
+      var f=$("f-ajustes");
+      Object.keys(a).forEach(function(k){
+        var el=f.elements[k];
+        if(!el) return;
+        if(SECRETOS.indexOf(k)!==-1){
+          el.value="";
+          el.placeholder=a[k]&&a[k].puesta?"•••••• guardada":"Sin clave";
+          var q=f.querySelector('[data-borrar="'+k+'"]'); if(q) q.hidden=!(a[k]&&a[k].puesta);
+        } else if(el.type==="checkbox"){ el.checked=!!a[k]; }
+        else el.value=a[k]==null?"":a[k];
+      });
+      $("ajustes-nota").textContent="";
+    }).catch(function(e){ aviso(e.message,true); });
+  }
+  $("f-ajustes").addEventListener("submit",function(e){
+    e.preventDefault();
+    var f=e.target, datos={};
+    ["recoger_cada_horas","recoger_tope_minutos","servidor_puerto"].forEach(function(k){ datos[k]=Number(f.elements[k].value); });
+    ["recoger_al_arrancar","semilla_github"].forEach(function(k){ datos[k]=f.elements[k].checked; });
+    datos.servidor_escuchar=f.elements.servidor_escuchar.value;
+    datos.repo=f.elements.repo.value;
+    SECRETOS.forEach(function(k){ if(f.elements[k].value.trim()) datos[k]=f.elements[k].value.trim(); });
+    api("/api/admin/ajustes",{method:"POST",body:datos}).then(function(j){
+      if(!j.cambiados.length){ aviso("No había nada que cambiar"); return; }
+      aviso(j.reiniciar?"Guardado. Reinicia el servidor (pestaña Sistema) para aplicar el puerto o el acceso.":"Guardado");
+      $("ajustes-nota").textContent=j.reiniciar?"Pendiente de reiniciar el servidor.":"";
+      cargarAjustes();
+    }).catch(function(err){ aviso(err.message,true); });
+  });
+  [].forEach.call(document.querySelectorAll("[data-borrar]"),function(b){
+    b.addEventListener("click",function(){
+      var k=b.getAttribute("data-borrar"), cuerpo={};
+      if(!confirm("¿Quitar esta clave de este PC?")) return;
+      cuerpo[k]={borrar:true};
+      api("/api/admin/ajustes",{method:"POST",body:cuerpo}).then(function(){ aviso("Clave quitada"); cargarAjustes(); })
+        .catch(function(e){ aviso(e.message,true); });
+    });
+  });
+  $("b-ver-clave").addEventListener("click",function(){
+    api("/api/admin/clave").then(function(j){ $("clave-actual").value=j.clave; })
+      .catch(function(e){ aviso(e.message,true); });
+  });
+  $("b-cambiar-clave").addEventListener("click",function(){
+    var n=$("clave-nueva").value.trim();
+    api("/api/admin/cambiar-clave",{method:"POST",body:{nueva:n}}).then(function(){
+      $("clave-nueva").value=""; $("clave-actual").value=""; aviso("Clave cambiada");
+    }).catch(function(e){ aviso(e.message,true); });
+  });
+
+  /* ---------------- sistema ---------------- */
+  // Dentro de la ventana de Surtidor.exe existe window.pywebview.api: abrir carpeta y actualizar
+  function lanzador(){ return window.pywebview&&window.pywebview.api?window.pywebview.api:null; }
+  function cargarSistema(){
+    api("/api/admin/resumen").then(function(r){
+      $("s-version").textContent=r.version||"dev";
+      $("s-lanzador").textContent=r.lanzador||"dev";
+      $("s-carpeta").textContent=r.carpeta||"—";
+    }).catch(function(){});
+    var hay=!!lanzador();
+    $("b-actualizar").disabled=!hay; $("b-carpeta").disabled=!hay;
+    $("s-ventana-nota").textContent=hay?"":"Actualizar y abrir la carpeta solo funcionan desde la ventana de Surtidor. "+
+      "Desde un navegador, cierra y vuelve a abrir Surtidor: comprueba las actualizaciones al arrancar.";
+  }
+  window.addEventListener("pywebviewready",function(){ if(vista==="sistema") cargarSistema(); });
+  $("b-actualizar").addEventListener("click",function(){
+    var l=lanzador(); if(!l) return;
+    var b=$("b-actualizar"); b.disabled=true; b.textContent="Buscando…";
+    l.buscar_actualizaciones().then(function(t){ aviso(t); })
+      .catch(function(e){ aviso(String(e),true); })
+      .finally(function(){ b.disabled=false; b.textContent="Buscar actualizaciones"; });
+  });
+  $("b-carpeta").addEventListener("click",function(){ var l=lanzador(); if(l) l.abrir_carpeta(); });
+  $("b-reiniciar").addEventListener("click",function(){
+    if(!confirm("¿Reiniciar el servidor? Tarda unos segundos.")) return;
+    api("/api/admin/reiniciar",{method:"POST"}).then(function(){
+      aviso("Reiniciando…");
+      var intentos=0;
+      (function esperar(){
+        setTimeout(function(){
+          fetch("/salud").then(function(r){ if(r.ok){ aviso("Servidor en marcha de nuevo"); refrescar(); } else throw 0; })
+            .catch(function(){ if(++intentos<40) esperar(); else aviso("El servidor no vuelve: mira la ventana de Surtidor",true); });
+        },1500);
+      })();
+    }).catch(function(e){ aviso(e.message,true); });
+  });
+  $("b-diag").addEventListener("click",function(){
+    var b=$("b-diag"); b.disabled=true; b.textContent="Comprobando…";
+    $("t-diag").innerHTML='<tr><td class="nota">Llamando a cada fuente…</td></tr>';
+    api("/api/admin/diagnostico").then(function(j){
+      var h='<tr><th>Fuente</th><th>Responde</th><th class="n">Tarda</th><th>Detalle</th></tr>';
+      j.fuentes.forEach(function(f){
+        h+="<tr><td>"+esc(f.fuente)+"</td><td>"+(f.ok?'<span class="ok">Sí</span>':'<span class="ko">No</span>')+
+           '</td><td class="n">'+(f.ms!=null?num(f.ms)+" ms":"—")+"</td><td>"+esc(f.detalle)+"</td></tr>";
+      });
+      h+='<tr><td class="nota" colspan="4">Python '+esc(j.python)+" · "+esc(j.disco_libre_gb)+" GB libres · precios.json "+
+         esc(j.precios_mb)+" MB</td></tr>";
+      $("t-diag").innerHTML=h;
+    }).catch(function(e){ aviso(e.message,true); })
+      .finally(function(){ b.disabled=false; b.textContent="Comprobar"; });
+  });
+
+  /* ---------------- arranque ---------------- */
+  function arrancar(){
+    var desde=(location.hash||"").replace("#","");
+    irA(["estado","registro","ajustes","sistema"].indexOf(desde)!==-1?desde:"estado");
+  }
+  arrancar();
+})();
+</script>
+</body>
+</html>

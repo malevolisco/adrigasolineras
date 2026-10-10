@@ -119,6 +119,10 @@ jobs:
         id: recolector
         if: steps.frescura.outputs.saltar != 'true'
         timeout-minutes: 40
+        env:
+          # por debajo del limite del paso: el recolector deja de barrer y guarda
+          # lo que tenga antes de que GitHub lo corte y se pierda la pasada entera
+          RECOLECTOR_TOPE_MINUTOS: "32"
         run: python collector/collect.py
 
       - name: Escribir estado.json
