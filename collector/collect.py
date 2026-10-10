@@ -63,7 +63,12 @@ LOG = []
 # Pasar de dos listados a cinco multiplica por 2,5 el tiempo de ejecucion.
 # Con este tope el trabajo nunca se queda colgado: al agotarlo se deja de
 # barrer ciudades y se publica lo que haya, que es preferible a no publicar.
-TOPE_MINUTOS = 150
+# Quien lo lanza puede ajustarlo con RECOLECTOR_TOPE_MINUTOS: la Action lo pone
+# por debajo de su propio limite de paso, y Surtidor.exe lo toma del panel.
+try:
+    TOPE_MINUTOS = max(5, int(os.environ.get("RECOLECTOR_TOPE_MINUTOS", "150")))
+except ValueError:
+    TOPE_MINUTOS = 150
 ARRANQUE = time.monotonic()
 CURSOR = {}          # por que ciudad iba cada fuente, se guarda en precios.json
 
@@ -1038,6 +1043,11 @@ def main():
     descubrir_marcas()
     todas = []
     for c in CADENAS:
+        # Prijzenindex ya administra su propio tiempo; el resto de cadenas no, asi que si el
+        # presupuesto se ha agotado se saltan y se guarda lo recogido antes de que corten el proceso
+        if c.get("fn") is not prijzenindex and not queda_tiempo(margen=1):
+            log(f"\n--- {c['marca']}: sin tiempo, se salta esta pasada ---")
+            continue
         try:
             todas.extend(procesar(c))
         except Exception as e:
@@ -1055,8 +1065,12 @@ def main():
         "cursor": CURSOR,
         "stations": limpias,
     }
-    with open(SALIDA, "w", encoding="utf-8") as f:
+    # Se escribe a un temporal y se cambia de golpe: si el equipo se apaga a mitad,
+    # precios.json sigue siendo el de antes y no un fichero cortado.
+    tmp = SALIDA + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, SALIDA)
 
     log("\n=== RESUMEN " + hoy + " ===")
     log(f"Estaciones distintas: {len(limpias)}")

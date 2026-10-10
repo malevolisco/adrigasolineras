@@ -104,6 +104,13 @@ aside{position:fixed;top:14px;right:14px;bottom:14px;width:382px;z-index:1100;di
 .brandbar h1{font-size:1.12rem;font-weight:800;font-variation-settings:"wdth" 116;
   letter-spacing:.02em;text-transform:uppercase;line-height:1}
 .brandbar p{font-size:.68rem;color:var(--niebla);margin-top:.18rem}
+/* Engranaje del panel de administración: solo existe cuando el mapa lo sirve Surtidor.exe */
+.brandbar .ajustes{margin-left:auto;width:32px;height:32px;border-radius:8px;display:none;
+  place-items:center;color:var(--niebla);border:1px solid var(--linea);text-decoration:none}
+.brandbar .ajustes svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.brandbar .ajustes:hover{color:var(--ambar);border-color:var(--ambar)}
+body.local .brandbar .ajustes{display:grid}
 
 .tabs{display:flex;padding:.55rem 1rem 0;gap:1.1rem;border-bottom:1px solid var(--linea)}
 .tabs button{background:transparent;border:0;color:var(--niebla);font:inherit;font-size:.78rem;
@@ -280,7 +287,9 @@ h3:first-child{margin-top:0}
 
 /* ---------------- Móvil: el panel pasa a hoja inferior ---------------- */
 @media (max-width:820px){
-  .totem{top:auto;bottom:calc(50vh + 12px);left:14px;width:168px}
+  .totem{top:auto;bottom:calc(50vh + 30px);left:auto;right:14px;width:168px}
+  /* los controles del mapa (zoom y atribución, que es obligatoria) suben por encima de la hoja */
+  .leaflet-bottom{bottom:50vh}
   aside{top:auto;left:0;right:0;bottom:0;width:auto;height:50vh;border-radius:18px 18px 0 0;
     border-left:0;border-right:0;border-bottom:0}
   aside:before{content:"";display:block;width:40px;height:4px;border-radius:99px;
@@ -319,6 +328,9 @@ h3:first-child{margin-top:0}
       <h1>Surtidor</h1>
       <p>Dónde repostar entre Madrid y Ámsterdam</p>
     </div>
+    <a class="ajustes" id="a-admin" href="/admin" title="Administración" aria-label="Administración">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </a>
   </div>
 
   <div class="tabs" role="tablist">
@@ -346,8 +358,8 @@ h3:first-child{margin-top:0}
       <div class="src" id="src">
         España: Ministerio para la Transición Ecológica, los ocho productos publicados ·
         Francia: Ministerio de Economía, gasóleo, SP95, SP98, E10, E85 y GPLc, cada 10 minutos.<br>
-        Alemania: Tankerkönig (gasóleo, E5 y E10), añade tu clave con <span class="mono">?tk=</span>
-        al final de la dirección.
+        <span id="src-de">Alemania: Tankerkönig (gasóleo, E5 y E10), añade tu clave con <span class="mono">?tk=</span>
+        al final de la dirección.</span>
       </div>
     </section>
 
@@ -387,6 +399,19 @@ h3:first-child{margin-top:0}
 (function(){
   "use strict";
 
+  /* ---- Surtidor.exe ---------------------------------------------------------
+     Cuando el mapa lo sirve el programa de escritorio, el servidor deja en
+     window.SURTIDOR las claves guardadas en el panel y la dirección del panel.
+     En la web pública no existe y todo sigue como siempre.                    */
+  var LOCAL=(window.SURTIDOR&&window.SURTIDOR.local)?window.SURTIDOR:{};
+  if(LOCAL.local){
+    document.body.classList.add("local");
+    var srcDe=document.getElementById("src-de");
+    if(srcDe) srcDe.innerHTML = LOCAL.tk
+      ? "Alemania: Tankerkönig (gasóleo, E5 y E10), con tu clave guardada en el panel."
+      : "Alemania: Tankerkönig (gasóleo, E5 y E10). Pon tu clave en Administración → Ajustes.";
+  }
+
   var CHEAP=["tango","tinq","tamoil","fieten","kreuze","firezone","ballenoil","plenoil","petroprix",
              "alcampo","carrefour","eroski","bonarea","costco","makro","argos","gt24","ok ","sprinter"];
   var COLORS={tango:"#C8102E",tinq:"#E4572E",tamoil:"#0B6E4F",shell:"#C8A200",bp:"#0B7A3B",
@@ -421,7 +446,9 @@ h3:first-child{margin-top:0}
   function num(v){ var n=parseFloat(String(v).replace(",",".")); return isNaN(n)?NaN:n; }
 
   /* ------------- Mapa ------------- */
-  var map=L.map("map",{zoomControl:true}).setView([46.5,2.5],5);
+  // El zoom va abajo a la izquierda: arriba quedaba tapado por el buscador
+  var map=L.map("map",{zoomControl:false}).setView([46.5,2.5],5);
+  L.control.zoom({position:"bottomleft",zoomInTitle:"Acercar",zoomOutTitle:"Alejar"}).addTo(map);
   var TILES=[
     {u:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
      o:{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}},
@@ -445,7 +472,68 @@ h3:first-child{margin-top:0}
   /* ------------- Estado ------------- */
   var store={}, markers={}, loaded=[], active=null, topId=null;
   var stopIds={}, routeCo=null, routeKm=0, corridor=[];
-  function add(s){ if(s&&!store[s.id]) store[s.id]=s; }
+  /* ---- Alta de estación, fusionando por cercanía ----------------------------
+     La misma gasolinera llega por dos caminos: de OpenStreetMap (con nombre y
+     marca, sin precio) y del recolector (con precio, con coordenadas sacadas
+     de un enlace de Google Maps). Nunca coinciden al metro, así que antes se
+     guardaban como dos estaciones distintas y quedaban dos puntos pegados: uno
+     con precio y otro sin él. Al pinchar el de OSM ponía "sin precio" aunque
+     el precio estuviera ahí al lado. Ahora, si hay una a menos de 80 metros,
+     se funden en una sola: se queda con el precio de quien lo traiga y con el
+     mejor nombre de los dos.                                                */
+  var rejilla={};                     // celdas de ~0,001° para no comparar todo con todo
+  var JUNTAS=0.0008;                  // ~80 m en latitud
+
+  function cerca(a,b){
+    var dy=(a.lat-b.lat), dx=(a.lon-b.lon)*Math.cos(a.lat*Math.PI/180);
+    return (dy*dy+dx*dx) < JUNTAS*JUNTAS;
+  }
+
+  function vecina(s){
+    var gy=Math.round(s.lat/0.001), gx=Math.round(s.lon/0.001), i, j, k, lista, n;
+    for(i=-1;i<=1;i++) for(j=-1;j<=1;j++){
+      lista=rejilla[(gy+i)+"|"+(gx+j)];
+      if(!lista) continue;
+      for(n=0;n<lista.length;n++){
+        k=store[lista[n]];
+        if(k&&cerca(s,k)) return k;
+      }
+    }
+    return null;
+  }
+
+  function apunta(s){
+    var k=Math.round(s.lat/0.001)+"|"+Math.round(s.lon/0.001);
+    (rejilla[k]||(rejilla[k]=[])).push(s.id);
+  }
+
+  function generico(n){ return !n||/^(gasolinera|estación|estacion|tankstation)$/i.test(n); }
+
+  function add(s){
+    if(!s||s.lat==null||s.lon==null) return;
+    if(store[s.id]) return;
+    var v=vecina(s);
+    if(v){
+      // Los precios mandan: vengan de donde vengan, se conservan todos
+      if(s.prices){
+        v.prices=v.prices||{};
+        for(var f in s.prices) if(v.prices[f]==null) v.prices[f]=s.prices[f];
+      }
+      if(v.price==null&&s.price!=null) v.price=s.price;
+      if(s.real) v.real=true;
+      // Un nombre de verdad gana al genérico, y OSM suele traer el bueno
+      if(generico(v.name)&&!generico(s.name)){ v.name=s.name; v.brand=s.brand; }
+      if(!v.sub&&s.sub) v.sub=s.sub;
+      if(s.motorway) v.motorway=true;
+      if(s.unmanned) v.unmanned=true;
+      if(s.cheap) v.cheap=true;
+      if(!v.cc&&s.cc) v.cc=s.cc;
+      if(s.sinFuel){ v.sinFuel=v.sinFuel||{}; for(var g in s.sinFuel) v.sinFuel[g]=1; }
+      return;
+    }
+    store[s.id]=s;
+    apunta(s);
+  }
   function brandOf(raw){
     var key=String(raw||"").toLowerCase(),k,h=0,i;
     for(k in COLORS){ if(key.indexOf(k)!==-1)
@@ -809,7 +897,8 @@ h3:first-child{margin-top:0}
   }
 
   /* ------------- Alemania (clave propia) ------------- */
-  var deKey=(location.search.match(/[?&]tk=([^&]+)/)||[])[1], deCache={};
+  // La clave va en la dirección (?tk=) o, con Surtidor.exe, en Admin → Ajustes: nunca en este fichero
+  var deKey=(location.search.match(/[?&]tk=([^&]+)/)||[])[1]||LOCAL.tk||"", deCache={};
   function deLoad(b){
     if(!deKey) return false;
     var c=b.getCenter(),k=c.lat.toFixed(2)+","+c.lng.toFixed(2);
@@ -850,7 +939,11 @@ h3:first-child{margin-top:0}
      precios se refrescan con cada commit de la Action sin necesidad de que se
      publique un despliegue, que es justo lo que se atasca cuando Netlify pausa
      los deploys. Si GitHub no responde, se cae a la copia local de siempre.    */
-  var PRECIOS_URL=[
+  // Con Surtidor.exe es al revés: lo más fresco es lo que ha recogido este PC, no el repositorio
+  var PRECIOS_URL = LOCAL.local ? [
+    "precios.json",
+    "https://raw.githubusercontent.com/malevolisco/adrigasolineras/main/precios.json"
+  ] : [
     "https://raw.githubusercontent.com/malevolisco/adrigasolineras/main/precios.json",
     "precios.json"
   ];
@@ -875,7 +968,7 @@ h3:first-child{margin-top:0}
       if(t) t.innerHTML+="<br>NL y BE: "+n+" estaciones con precio ("+esc(cuales)+"), v\u00eda "+
         '<a href="https://prijzenindex.nl" target="_blank" rel="noopener" style="color:#8B94A2">Prijzenindex</a>'+
         ", actualizado "+String(j.updated||"").slice(0,16).replace("T"," ")+
-        (origen==="local"?" (copia del sitio)":"")+".";
+        (origen==="local"?(LOCAL.local?" (recogido en este PC)":" (copia del sitio)"):"")+".";
       render();
     }
     function intenta(){
@@ -1562,7 +1655,7 @@ h3:first-child{margin-top:0}
 
   /* Open Charge Map: registro europeo con operadores y potencias mejor curados.
      Pide clave gratuita, se añade con ?ocm=TU_CLAVE al final de la dirección. */
-  var ocmKey=(location.search.match(/[?&]ocm=([^&]+)/)||[])[1]||"";
+  var ocmKey=(location.search.match(/[?&]ocm=([^&]+)/)||[])[1]||LOCAL.ocm||"";
   function ocmLoad(c){
     var u="https://api.openchargemap.io/v3/poi/?output=json&compact=true&verbose=false"+
       "&maxresults=500&boundingbox=("+c.n.toFixed(4)+","+c.w.toFixed(4)+"),("+

@@ -1,0 +1,5 @@
+# el servidor local (Surtidor.exe); el recolector solo usa la libreria estandar
+fastapi>=0.110
+uvicorn>=0.29
+# ventana de escritorio del lanzador; sin ella, el mapa se abre en el navegador
+pywebview>=5.0; sys_platform == "win32"

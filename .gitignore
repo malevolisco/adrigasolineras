@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+# compilacion del exe
+build/
+dist/
+surtidor_version.py
+# lo de cada usuario cuando se ejecuta desde la carpeta del repositorio: nunca al repositorio
+# (precios.json SI va: lo publica la Action y es la semilla del exe)
+config.json
+historial.jsonl
+precios.anterior.json
+precios.antes.json
+precios.json.tmp
+surtidor.log
+_ventana/
+_anterior/
+VERSION
+VERSION_MALA

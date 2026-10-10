@@ -1,0 +1,25 @@
+name: Pruebas
+
+# En cada cambio de codigo: si alguna prueba falla, se ve antes de publicar.
+# Los commits de la Action de precios (precios.json, estado.json, logs) no las disparan.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "precios.json"
+      - "estado.json"
+      - "logs/**"
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Librerias
+        run: pip install -r requirements.txt pytest httpx
+      - name: Pruebas
+        run: python -m pytest tests -q
