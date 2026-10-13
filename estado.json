@@ -1,11 +1,11 @@
 {
-  "generado_utc": "2026-10-12T23:24:09Z",
-  "generado_madrid": "2026-10-13 01:24:09 CEST",
-  "disparador": "schedule",
-  "origen": "",
-  "programado_utc": "2026-10-12T16:10:00Z",
-  "deriva_programacion_min": 404.1,
+  "generado_utc": "2026-10-13T05:41:35Z",
+  "generado_madrid": "2026-10-13 07:41:35 CEST",
+  "disparador": "workflow_dispatch",
+  "origen": "manual",
+  "programado_utc": "",
+  "deriva_programacion_min": null,
   "deriva_cola_min": 0.0,
-  "run_id": "38319254866",
-  "run_url": "https://github.com/malevolisco/adrigasolineras/actions/runs/38319254866"
+  "run_id": "38350039816",
+  "run_url": "https://github.com/malevolisco/adrigasolineras/actions/runs/38350039816"
 }
