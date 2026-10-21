@@ -16,3 +16,6 @@ _ventana/
 _anterior/
 VERSION
 VERSION_MALA
+
+# Fabrica (.claude/fabrica.md): trabajo de una sesion, nunca al repositorio
+.fabrica/
