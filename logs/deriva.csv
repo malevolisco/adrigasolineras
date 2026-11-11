@@ -272,3 +272,4 @@ creado_utc,evento,origen,cron,programado_utc,iniciado_utc,deriva_programacion_mi
 2026-11-10T21:46:17Z,schedule,,"10 16 * * *",2026-11-10T16:10:00Z,2026-11-10T21:46:17Z,336.3,0.0,skipped,42908242426
 2026-11-11T06:10:22Z,workflow_dispatch,manual,"",,2026-11-11T06:10:22Z,,0.0,success,42970555045
 2026-11-11T12:38:02Z,schedule,,"10 5 * * *",2026-11-11T05:10:00Z,2026-11-11T12:38:02Z,448.0,0.0,skipped,43022024100
+2026-11-11T17:10:23Z,workflow_dispatch,manual,"",,2026-11-11T17:10:23Z,,0.0,success,43065534076
